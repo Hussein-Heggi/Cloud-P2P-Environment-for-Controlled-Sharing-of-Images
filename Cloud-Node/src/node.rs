@@ -64,8 +64,9 @@ impl Node {
         // Start listener in background
         let network = self.network.clone();
         let tx = self.message_tx.clone();
+        let peers = self.peers.clone();
         tokio::spawn(async move {
-            if let Err(e) = network.start_listener(tx).await {
+            if let Err(e) = network.start_listener(tx, peers).await {
                 error!("Listener error: {}", e);
             }
         });
@@ -73,7 +74,7 @@ impl Node {
         // Wait a bit for all nodes to start listening
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Connect to all other peers
+        // Connect to all other peers (only higher IDs to avoid duplicates)
         self.connect_to_peers().await?;
 
         // Start heartbeat task
@@ -89,11 +90,14 @@ impl Node {
         Ok(())
     }
 
-    /// Connect to all peer nodes
+    /// Connect to all peer nodes with higher IDs (avoids duplicate connections)
     async fn connect_to_peers(&self) -> Result<()> {
         for node_info in &self.config.nodes {
-            if node_info.id == self.id {
-                continue; // Don't connect to self
+            // Only connect to nodes with higher IDs to avoid duplicate connections
+            // Since TCP is bidirectional, if node 0 connects to node 1,
+            // node 1 doesn't need to connect back to node 0
+            if node_info.id <= self.id {
+                continue; // Skip self and lower IDs
             }
 
             info!("Attempting to connect to node {} at {}", node_info.id, node_info.address);
