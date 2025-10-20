@@ -63,9 +63,7 @@ impl NetworkLayer {
         peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
     ) -> Result<()> {
         // Wrap the stream immediately
-        let peer_conn = PeerConnection {
-            stream: Arc::new(tokio::sync::Mutex::new(stream)),
-        };
+        let peer_conn = PeerConnection::new(stream);
         
         // Clone for reading
         let read_conn = peer_conn.clone();
@@ -141,9 +139,7 @@ impl NetworkLayer {
 
         info!("Connected to peer at {}", peer_addr);
 
-        Ok(PeerConnection {
-            stream: Arc::new(tokio::sync::Mutex::new(stream)),
-        })
+        Ok(PeerConnection::new(stream))
     }
 
     /// Send a message over a stream
@@ -164,6 +160,13 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
+    /// Create a new peer connection from a TCP stream
+    pub fn new(stream: TcpStream) -> Self {
+        Self {
+            stream: Arc::new(tokio::sync::Mutex::new(stream)),
+        }
+    }
+
     /// Send a message to this peer
     pub async fn send(&self, message: &Message) -> Result<()> {
         let mut stream = self.stream.lock().await;

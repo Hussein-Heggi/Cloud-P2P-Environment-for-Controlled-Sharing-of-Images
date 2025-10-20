@@ -1,11 +1,13 @@
 use crate::message::Message;
 use crate::network::{NetworkLayer, PeerConnection};
 use anyhow::{Context, Result};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 
@@ -15,7 +17,7 @@ pub struct NodeInfo {
     pub address: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub nodes: Vec<NodeInfo>,
 }
@@ -80,8 +82,9 @@ impl Node {
         // Start heartbeat task
         let peers = self.peers.clone();
         let node_id = self.id;
+        let config = self.config.clone();
         tokio::spawn(async move {
-            Self::heartbeat_task(node_id, peers).await;
+            Self::heartbeat_task(node_id, peers, config).await;
         });
 
         // Handle incoming messages
@@ -155,8 +158,8 @@ impl Node {
         Ok(())
     }
 
-    /// Periodic heartbeat to all peers
-    async fn heartbeat_task(node_id: u32, peers: Arc<RwLock<HashMap<u32, PeerConnection>>>) {
+    /// Periodic heartbeat to all peers and retry failed connections
+    async fn heartbeat_task(node_id: u32, peers: Arc<RwLock<HashMap<u32, PeerConnection>>>, config: Config) {
         let mut ticker = interval(Duration::from_secs(5));
 
         loop {
@@ -172,10 +175,45 @@ impl Node {
                 timestamp,
             };
 
+            // Send heartbeats to connected peers
             let peers_lock = peers.read().await;
             for (peer_id, peer) in peers_lock.iter() {
                 if let Err(e) = peer.send(&heartbeat).await {
                     error!("Failed to send heartbeat to node {}: {}", peer_id, e);
+                }
+            }
+            drop(peers_lock);
+
+            // Retry connections to missing peers (only higher IDs to avoid duplicates)
+            for node_info in &config.nodes {
+                if node_info.id <= node_id {
+                    continue; // Skip self and lower IDs
+                }
+
+                // Check if we're already connected
+                let has_connection = peers.read().await.contains_key(&node_info.id);
+                
+                if !has_connection {
+                    debug!("Retrying connection to node {} at {}", node_info.id, node_info.address);
+                    
+                    // Attempt to connect
+                    match TcpStream::connect(&node_info.address).await {
+                        Ok(mut stream) => {
+                            // Send Hello
+                            let hello = Message::Hello { from_node: node_id };
+                            if let Ok(bytes) = hello.to_bytes() {
+                                if stream.write_all(&bytes).await.is_ok() {
+                                    let conn = PeerConnection::new(stream);
+                                    
+                                    peers.write().await.insert(node_info.id, conn);
+                                    info!("Successfully reconnected to node {}", node_info.id);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            debug!("Node {} still not reachable, will retry in 5s", node_info.id);
+                        }
+                    }
                 }
             }
         }

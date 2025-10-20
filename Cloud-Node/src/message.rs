@@ -33,6 +33,7 @@ impl Message {
     }
     
     /// Get the sender's node ID from any message
+    #[allow(dead_code)]
     pub fn sender_id(&self) -> u32 {
         match self {
             Message::Hello { from_node } => *from_node,
