@@ -385,7 +385,7 @@ impl Node {
         Ok(())
     }
 
-    /// Heartbeat task - sends heartbeat every 5ms
+    /// Heartbeat task - sends heartbeat every 5 SECONDS
     async fn heartbeat_task(
         my_physical_id: u32,
         peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
@@ -393,7 +393,9 @@ impl Node {
         is_leader: Arc<RwLock<bool>>,
         logical_to_physical: Arc<RwLock<HashMap<u32, u32>>>,
     ) {
-        let mut ticker = interval(Duration::from_millis(5));
+        // ============ CHANGED: 5 SECONDS instead of 5ms ============
+        let mut ticker = interval(Duration::from_secs(5));
+        // ============================================================
 
         loop {
             ticker.tick().await;
@@ -422,6 +424,9 @@ impl Node {
     }
 
     /// Failure detector - checks for leader failure
+    /// Only triggers election when:
+    /// 1. No leader exists (initial startup)
+    /// 2. Current leader fails (timeout)
     async fn failure_detector_task(
         my_physical_id: u32,
         my_logical_pid: Arc<RwLock<u32>>,
@@ -431,8 +436,12 @@ impl Node {
         physical_to_logical: Arc<RwLock<HashMap<u32, u32>>>,
         logical_to_physical: Arc<RwLock<HashMap<u32, u32>>>,
     ) {
-        const LEADER_TIMEOUT: Duration = Duration::from_millis(50); // 10x heartbeat
-        let mut ticker = interval(Duration::from_millis(10));
+        // ============ CHANGED: 15 SECONDS timeout (3x heartbeat) ============
+        const LEADER_TIMEOUT: Duration = Duration::from_secs(15);
+        // ====================================================================
+        
+        let mut ticker = interval(Duration::from_secs(2)); // Check every 2 seconds
+        let mut election_in_progress = false;
 
         loop {
             ticker.tick().await;
@@ -440,27 +449,45 @@ impl Node {
             let my_logical = *my_logical_pid.read().await;
             let my_is_leader = *is_leader.read().await;
 
+            // ============ NEW: Once we have a leader, only check for failure ============
+            // Don't trigger elections if we already have a stable leader
+            // =============================================================================
+
             // Find physical ID of current leader (logical PID 2)
             let leader_physical_id = logical_to_physical.read().await.get(&2).copied();
 
+            // Case 1: No leader exists at all - initial election needed
+            if leader_physical_id.is_none() && !election_in_progress {
+                info!("═══════════════════════════════════════════════════════");
+                info!("No leader in network - waiting for initial election...");
+                info!("═══════════════════════════════════════════════════════");
+                continue; // Leader will be assigned during join process
+            }
+
             if let Some(leader_phys_id) = leader_physical_id {
-                if leader_phys_id == my_physical_id {
-                    // We're the leader, nothing to check
+                // Case 2: We ARE the leader - nothing to check
+                if leader_phys_id == my_physical_id && my_is_leader {
+                    election_in_progress = false; // Reset flag
                     continue;
                 }
 
-                // Check if leader has timed out
+                // Case 3: Someone else is leader - monitor their heartbeat
                 let heartbeats = last_heartbeat.read().await;
                 if let Some(last_hb) = heartbeats.get(&leader_phys_id) {
-                    if last_hb.elapsed() > LEADER_TIMEOUT {
+                    if last_hb.elapsed() > LEADER_TIMEOUT && !election_in_progress {
+                        // ============ LEADER FAILURE DETECTED ============
+                        election_in_progress = true; // Prevent multiple elections
+                        
                         warn!("═══════════════════════════════════════════════════════");
-                        warn!("LEADER FAILURE DETECTED!");
+                        warn!("⚠️  LEADER FAILURE DETECTED!");
                         warn!("Physical ID {} (Logical PID 2) has timed out!", leader_phys_id);
+                        warn!("Last heartbeat: {:.1}s ago", last_hb.elapsed().as_secs_f32());
                         warn!("═══════════════════════════════════════════════════════");
                         
-                        // Am I logical PID 1?
+                        // Am I logical PID 1? Then I take over
                         if my_logical == 1 {
-                            info!("I am Logical PID 1 - TAKING OVER AS LEADER!");
+                            info!("🎯 I am Logical PID 1 - TAKING OVER AS LEADER!");
+                            info!("This is the ONLY re-election (leader failure)");
                             
                             // Shift to logical PID 2
                             *my_logical_pid.write().await = 2;
@@ -495,8 +522,12 @@ impl Node {
                             }
                             
                             info!("═══════════════════════════════════════════════════════");
-                            info!("Physical ID {} is now LEADER (Logical PID 2)", my_physical_id);
+                            info!("✅ Physical ID {} is now LEADER (Logical PID 2)", my_physical_id);
+                            info!("System stabilized - no more elections until next failure");
                             info!("═══════════════════════════════════════════════════════");
+                            
+                            election_in_progress = false;
+                            
                         } else if my_logical == 0 {
                             // Check if PID 1 also failed
                             let pid1_physical = logical_to_physical.read().await.get(&1).copied();
@@ -504,7 +535,7 @@ impl Node {
                             if let Some(pid1_phys) = pid1_physical {
                                 if let Some(pid1_last_hb) = heartbeats.get(&pid1_phys) {
                                     if pid1_last_hb.elapsed() > LEADER_TIMEOUT {
-                                        warn!("Both Leader and Logical PID 1 have failed!");
+                                        warn!("⚠️  BOTH Leader AND Logical PID 1 have failed!");
                                         warn!("Physical ID {} (Logical PID 0) taking over!", my_physical_id);
                                         
                                         *my_logical_pid.write().await = 2;
@@ -524,11 +555,22 @@ impl Node {
                                         for peer in peers_lock.values() {
                                             let _ = peer.send(&takeover).await;
                                         }
+                                        
+                                        info!("✅ Physical ID {} is now LEADER", my_physical_id);
+                                        election_in_progress = false;
                                     }
                                 }
                             }
+                        } else {
+                            // We're not next in line, wait for proper successor
+                            info!("Waiting for Logical PID 1 to take over...");
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            election_in_progress = false;
                         }
                     }
+                } else {
+                    // No heartbeat record yet for leader - might be starting up
+                    debug!("No heartbeat record yet for leader Physical ID {}", leader_phys_id);
                 }
             }
         }
