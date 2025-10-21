@@ -8,34 +8,28 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 
 /// Manages TCP connections between nodes
+/// Uses Physical IDs as keys for all operations
 #[derive(Clone)]
 pub struct NetworkLayer {
-    node_id: u32,
     listen_addr: String,
 }
 
 impl NetworkLayer {
-    pub fn new(node_id: u32, listen_addr: String) -> Self {
-        Self {
-            node_id,
-            listen_addr,
-        }
+    pub fn new(listen_addr: String) -> Self {
+        Self { listen_addr }
     }
 
     /// Start listening for incoming connections
     pub async fn start_listener(
         &self,
-        tx: mpsc::UnboundedSender<(u32, Message)>,
-        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
+        tx: mpsc::UnboundedSender<(u32, Message)>,  // Physical ID, Message
+        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,  // Physical ID → Connection
     ) -> Result<()> {
         let listener = TcpListener::bind(&self.listen_addr)
             .await
             .context(format!("Failed to bind to {}", self.listen_addr))?;
 
-        info!(
-            "Node {} listening on {}",
-            self.node_id, self.listen_addr
-        );
+        info!("Listening on {}", self.listen_addr);
 
         loop {
             match listener.accept().await {
@@ -44,8 +38,8 @@ impl NetworkLayer {
                     let tx = tx.clone();
                     let peers = peers.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_incoming_connection(stream, tx, peers).await {
-                            error!("Connection error: {}", e);
+                        if let Err(e) = Self::handle_connection(stream, tx, peers).await {
+                            error!("Connection error from {}: {}", addr, e);
                         }
                     });
                 }
@@ -57,63 +51,60 @@ impl NetworkLayer {
     }
 
     /// Handle an incoming connection
-    async fn handle_incoming_connection(
+    async fn handle_connection(
         stream: TcpStream,
         tx: mpsc::UnboundedSender<(u32, Message)>,
         peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
     ) -> Result<()> {
-        // Wrap the stream immediately
         let peer_conn = PeerConnection::new(stream);
-        
-        // Clone for reading
         let read_conn = peer_conn.clone();
         
-        // Read first message (should be Hello)
+        // Read first message to discover physical ID
         let first_msg = read_conn.receive_one().await?;
         
-        if let Message::Hello { from_node } = first_msg {
-            info!("Received Hello from node {} on incoming connection", from_node);
-            
-            // Store the connection if we don't already have one
-            let mut peers_write = peers.write().await;
-            if !peers_write.contains_key(&from_node) {
-                peers_write.insert(from_node, peer_conn.clone());
-                info!("Stored incoming connection from node {}", from_node);
+        // Extract physical ID from first message
+        let physical_id = match &first_msg {
+            Message::JoinRequest { physical_id, .. } => *physical_id,
+            Message::Heartbeat { physical_id, .. } => *physical_id,
+            _ => {
+                warn!("First message doesn't contain physical ID");
+                return Ok(());
             }
-            drop(peers_write);
-            
-            // Forward Hello message
-            tx.send((from_node, first_msg))?;
-            
-            // Continue reading messages
-            Self::read_loop(from_node, read_conn, tx).await?;
-        } else {
-            warn!("First message was not Hello, closing connection");
-        }
+        };
+        
+        info!("Identified incoming connection: Physical ID {}", physical_id);
+        
+        // Store connection indexed by physical ID
+        peers.write().await.insert(physical_id, peer_conn.clone());
+        
+        // Forward first message
+        tx.send((physical_id, first_msg))?;
+        
+        // Continue reading messages
+        Self::read_loop(physical_id, read_conn, tx).await?;
         
         Ok(())
     }
 
     /// Continuous read loop for a connection
     async fn read_loop(
-        peer_id: u32,
+        physical_id: u32,
         conn: PeerConnection,
         tx: mpsc::UnboundedSender<(u32, Message)>,
     ) -> Result<()> {
         loop {
             match conn.receive_one().await {
                 Ok(message) => {
-                    debug!("Received {:?} from node {}", message, peer_id);
-                    if tx.send((peer_id, message)).is_err() {
-                        warn!("Failed to send message to handler - channel closed");
+                    if tx.send((physical_id, message)).is_err() {
+                        warn!("Channel closed for Physical ID {}", physical_id);
                         break;
                     }
                 }
                 Err(e) => {
                     if e.to_string().contains("UnexpectedEof") {
-                        debug!("Connection closed by node {}", peer_id);
+                        debug!("Connection closed: Physical ID {}", physical_id);
                     } else {
-                        error!("Error reading from node {}: {}", peer_id, e);
+                        error!("Read error from Physical ID {}: {}", physical_id, e);
                     }
                     break;
                 }
@@ -123,33 +114,13 @@ impl NetworkLayer {
     }
 
     /// Connect to a remote node
-    pub async fn connect_to_peer(
-        &self,
-        peer_addr: &str,
-    ) -> Result<PeerConnection> {
-        let mut stream = TcpStream::connect(peer_addr)
+    pub async fn connect_to_peer(&self, peer_addr: &str) -> Result<PeerConnection> {
+        let stream = TcpStream::connect(peer_addr)
             .await
             .context(format!("Failed to connect to {}", peer_addr))?;
 
-        // Send initial hello
-        let hello = Message::Hello {
-            from_node: self.node_id,
-        };
-        Self::send_message(&mut stream, &hello).await?;
-
-        info!("Connected to peer at {}", peer_addr);
-
+        info!("Connected to {}", peer_addr);
         Ok(PeerConnection::new(stream))
-    }
-
-    /// Send a message over a stream
-    async fn send_message(stream: &mut TcpStream, message: &Message) -> Result<()> {
-        let bytes = message.to_bytes()?;
-        stream
-            .write_all(&bytes)
-            .await
-            .context("Failed to send message")?;
-        Ok(())
     }
 }
 
@@ -160,7 +131,6 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
-    /// Create a new peer connection from a TCP stream
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream: Arc::new(tokio::sync::Mutex::new(stream)),
@@ -171,11 +141,7 @@ impl PeerConnection {
     pub async fn send(&self, message: &Message) -> Result<()> {
         let mut stream = self.stream.lock().await;
         let bytes = message.to_bytes()?;
-        stream
-            .write_all(&bytes)
-            .await
-            .context("Failed to send to peer")?;
-        debug!("Sent {:?} to peer", message);
+        stream.write_all(&bytes).await?;
         Ok(())
     }
     

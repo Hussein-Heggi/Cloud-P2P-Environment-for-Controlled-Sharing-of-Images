@@ -5,15 +5,13 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Instant}; // ← ADDED: Instant for timing
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInfo {
-    pub id: u32,
+    pub id: u32,        // Physical ID
     pub address: String,
 }
 
@@ -24,76 +22,75 @@ pub struct Config {
 
 impl Config {
     pub fn from_file(path: &str) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .context(format!("Failed to read config file: {}", path))?;
+        let content = std::fs::read_to_string(path)?;
         serde_json::from_str(&content).context("Failed to parse config")
     }
 }
 
 pub struct Node {
-    id: u32,
+    // ============ PHYSICAL IDENTITY (Static, never changes) ============
+    my_physical_id: u32,            // My physical ID from config (IMMUTABLE)
+    my_address: String,             // My network address
+    all_nodes: Vec<NodeInfo>,       // All known nodes with physical IDs
+    
+    // ============ LOGICAL IDENTITY (Dynamic, changes during elections) ============
+    my_logical_pid: Arc<RwLock<u32>>,    // My current logical PID (0, 1, or 2)
+    is_leader: Arc<RwLock<bool>>,        // Am I the leader? (logical PID == 2)
+    
+    // ============ MAPPING TABLES (Physical ↔ Logical) ============
+    physical_to_logical: Arc<RwLock<HashMap<u32, u32>>>,  // Physical ID → Logical PID
+    logical_to_physical: Arc<RwLock<HashMap<u32, u32>>>,  // Logical PID → Physical ID
+    physical_to_address: Arc<RwLock<HashMap<u32, String>>>, // Physical ID → Address
+    
+    // ============ NETWORK STATE ============
+    peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,  // Physical ID → Connection
+    last_heartbeat: Arc<RwLock<HashMap<u32, Instant>>>, // Physical ID → Last HB time
+    
+    // ============ COMMUNICATION ============
     network: NetworkLayer,
-    peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
-    config: Config,
-    message_rx: mpsc::UnboundedReceiver<(u32, Message)>,
+    message_rx: mpsc::UnboundedReceiver<(u32, Message)>,  // Physical ID, Message
     message_tx: mpsc::UnboundedSender<(u32, Message)>,
-    
-    // ============ NEW: Election state fields ============
-    /// Who is currently the leader? None if no leader elected yet
-    current_leader: Arc<RwLock<Option<u32>>>,
-    
-    /// Highest PID we know about (updated from leader's heartbeats)
-    max_known_pid: Arc<RwLock<u32>>,
-    
-    /// All PIDs the leader has interacted with
-    known_pids: Arc<RwLock<Vec<u32>>>,
-    
-    /// When did we last hear from the leader?
-    last_leader_heartbeat: Arc<RwLock<Instant>>,
-    
-    /// Are we currently in an election?
-    in_election: Arc<RwLock<bool>>,
-    // ====================================================
 }
 
 impl Node {
-    pub fn new(node_id: u32, config: Config) -> Result<Self> {
-        let node_info = config
-            .nodes
-            .iter()
-            .find(|n| n.id == node_id)
-            .context(format!("Node ID {} not found in config", node_id))?;
-
+    pub fn new(my_physical_id: u32, config: Config) -> Result<Self> {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
-
-        // ============ NEW: Collect PIDs and find max ============
-        let all_pids: Vec<u32> = config.nodes.iter().map(|n| n.id).collect();
-        let max_pid = all_pids.iter().copied().max().unwrap_or(node_id);
-        // ========================================================
+        
+        // Find our address
+        let my_node_info = config.nodes.iter()
+            .find(|n| n.id == my_physical_id)
+            .context(format!("Physical ID {} not found in config", my_physical_id))?;
 
         Ok(Self {
-            id: node_id,
-            network: NetworkLayer::new(node_id, node_info.address.clone()),
+            my_physical_id,
+            my_address: my_node_info.address.clone(),
+            all_nodes: config.nodes.clone(),
+            network: NetworkLayer::new(my_node_info.address.clone()),
+            
+            my_logical_pid: Arc::new(RwLock::new(2)), // Start assuming leader
+            is_leader: Arc::new(RwLock::new(false)),
+            
+            physical_to_logical: Arc::new(RwLock::new(HashMap::new())),
+            logical_to_physical: Arc::new(RwLock::new(HashMap::new())),
+            physical_to_address: Arc::new(RwLock::new(HashMap::new())),
+            
             peers: Arc::new(RwLock::new(HashMap::new())),
-            config,
+            last_heartbeat: Arc::new(RwLock::new(HashMap::new())),
+            
             message_rx,
             message_tx,
-            
-            // ============ NEW: Initialize election state ============
-            current_leader: Arc::new(RwLock::new(None)),
-            max_known_pid: Arc::new(RwLock::new(max_pid)),
-            known_pids: Arc::new(RwLock::new(all_pids)),
-            last_leader_heartbeat: Arc::new(RwLock::new(Instant::now())),
-            in_election: Arc::new(RwLock::new(false)),
-            // ========================================================
         })
     }
 
     /// Start the node
     pub async fn run(mut self) -> Result<()> {
-        info!("Starting node {}", self.id);
+        info!("╔═══════════════════════════════════════════════════════════╗");
+        info!("║ Starting Node                                            ║");
+        info!("║ Physical ID: {}                                           ║", self.my_physical_id);
+        info!("║ Address: {}                                   ║", self.my_address);
+        info!("╚═══════════════════════════════════════════════════════════╝");
 
-        // Start listener in background
+        // Start listener
         let network = self.network.clone();
         let tx = self.message_tx.clone();
         let peers = self.peers.clone();
@@ -103,472 +100,437 @@ impl Node {
             }
         });
 
-        // Wait a bit for all nodes to start listening
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Connect to all other peers (only higher IDs to avoid duplicates)
-        self.connect_to_peers().await?;
+        // Join the network (discover our logical PID)
+        self.join_network().await?;
 
-        // ============ CHANGED: Pass election state to heartbeat ============
-        // Start heartbeat task
+        // Display mapping
+        self.display_id_mapping().await;
+
+        // Start heartbeat (every 5ms)
+        let my_physical_id = self.my_physical_id;
         let peers = self.peers.clone();
-        let node_id = self.id;
-        let config = self.config.clone();
-        let current_leader = self.current_leader.clone();
-        let max_known_pid = self.max_known_pid.clone();
-        let known_pids = self.known_pids.clone();
+        let my_logical_pid = self.my_logical_pid.clone();
+        let is_leader = self.is_leader.clone();
+        let logical_to_physical = self.logical_to_physical.clone();
         tokio::spawn(async move {
-            Self::heartbeat_task(node_id, peers, config, current_leader, max_known_pid, known_pids).await;
-        });
-        // ===================================================================
-
-        // ============ NEW: Start election monitor task ============
-        // This task watches for leader failures and triggers elections
-        let node_id = self.id;
-        let peers = self.peers.clone();
-        let current_leader = self.current_leader.clone();
-        let max_known_pid = self.max_known_pid.clone();
-        let known_pids = self.known_pids.clone();
-        let last_leader_heartbeat = self.last_leader_heartbeat.clone();
-        let in_election = self.in_election.clone();
-        tokio::spawn(async move {
-            Self::election_monitor_task(
-                node_id,
+            Self::heartbeat_task(
+                my_physical_id,
                 peers,
-                current_leader,
-                max_known_pid,
-                known_pids,
-                last_leader_heartbeat,
-                in_election,
+                my_logical_pid,
+                is_leader,
+                logical_to_physical,
             ).await;
         });
-        // ==========================================================
 
-        // Handle incoming messages
+        // Start failure detector
+        let my_physical_id = self.my_physical_id;
+        let my_logical_pid = self.my_logical_pid.clone();
+        let is_leader = self.is_leader.clone();
+        let last_heartbeat = self.last_heartbeat.clone();
+        let peers = self.peers.clone();
+        let physical_to_logical = self.physical_to_logical.clone();
+        let logical_to_physical = self.logical_to_physical.clone();
+        tokio::spawn(async move {
+            Self::failure_detector_task(
+                my_physical_id,
+                my_logical_pid,
+                is_leader,
+                last_heartbeat,
+                peers,
+                physical_to_logical,
+                logical_to_physical,
+            ).await;
+        });
+
+        // Handle messages
         self.message_loop().await;
 
         Ok(())
     }
 
-    /// Connect to all peer nodes with higher IDs (avoids duplicate connections)
-    async fn connect_to_peers(&self) -> Result<()> {
-        for node_info in &self.config.nodes {
-            if node_info.id <= self.id {
-                continue;
+    /// Join the network and discover our logical PID
+    async fn join_network(&mut self) -> Result<()> {
+        info!("Sending JoinRequest to discover network...");
+
+        let join_msg = Message::JoinRequest {
+            physical_id: self.my_physical_id,
+            from_address: self.my_address.clone(),
+        };
+
+        // Initialize our own mapping
+        self.physical_to_address.write().await.insert(
+            self.my_physical_id, 
+            self.my_address.clone()
+        );
+
+        // Try to connect to all other nodes
+        let mut connected_count = 0;
+        for node in &self.all_nodes {
+            if node.id == self.my_physical_id {
+                continue; // Skip self
             }
 
-            info!("Attempting to connect to node {} at {}", node_info.id, node_info.address);
-
-            match self.network.connect_to_peer(&node_info.address).await {
+            match self.network.connect_to_peer(&node.address).await {
                 Ok(conn) => {
-                    self.peers.write().await.insert(node_info.id, conn);
-                    info!("Successfully connected to node {}", node_info.id);
+                    if let Err(e) = conn.send(&join_msg).await {
+                        warn!("Failed to send join request to {}: {}", node.address, e);
+                        continue;
+                    }
+
+                    self.peers.write().await.insert(node.id, conn);
+                    self.physical_to_address.write().await.insert(node.id, node.address.clone());
+                    info!("Connected to Physical ID {} at {}", node.id, node.address);
+                    connected_count += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to connect to node {}: {}", node_info.id, e);
-                    warn!("Will retry in heartbeat task");
+                    debug!("Could not connect to Physical ID {} at {}: {}", node.id, node.address, e);
                 }
             }
+        }
+
+        // Wait for responses
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        if connected_count == 0 {
+            // We're alone - we're the leader with logical PID 2
+            info!("═══════════════════════════════════════════════════════");
+            info!("No peers found - I am the LEADER!");
+            info!("Physical ID: {} → Logical PID: 2 (LEADER)", self.my_physical_id);
+            info!("═══════════════════════════════════════════════════════");
+            
+            *self.my_logical_pid.write().await = 2;
+            *self.is_leader.write().await = true;
+            
+            // Update mappings
+            self.physical_to_logical.write().await.insert(self.my_physical_id, 2);
+            self.logical_to_physical.write().await.insert(2, self.my_physical_id);
         }
 
         Ok(())
     }
 
-    /// Main message processing loop
+    /// Display current ID mapping
+    async fn display_id_mapping(&self) {
+        info!("═══════════════════════════════════════════════════════");
+        info!("Current ID Mapping:");
+        info!("───────────────────────────────────────────────────────");
+        
+        let p2l = self.physical_to_logical.read().await;
+        let l2p = self.logical_to_physical.read().await;
+        
+        // Display in logical order (2, 1, 0)
+        for logical_pid in [2u32, 1, 0] {
+            if let Some(&physical_id) = l2p.get(&logical_pid) {
+                let role = match logical_pid {
+                    2 => "LEADER",
+                    1 => "NEXT LEADER",
+                    0 => "FOLLOWER",
+                    _ => "UNKNOWN",
+                };
+                let me = if physical_id == self.my_physical_id { " (ME)" } else { "" };
+                info!("Logical PID {} ({:12}) ← Physical ID {}{}", logical_pid, role, physical_id, me);
+            }
+        }
+        info!("═══════════════════════════════════════════════════════");
+    }
+
+    /// Message processing loop
     async fn message_loop(&mut self) {
-        while let Some((sender_id, message)) = self.message_rx.recv().await {
-            if let Err(e) = self.handle_message(sender_id, message).await {
+        while let Some((from_physical_id, message)) = self.message_rx.recv().await {
+            if let Err(e) = self.handle_message(from_physical_id, message).await {
                 error!("Error handling message: {}", e);
             }
         }
     }
 
-    /// Handle received messages
-    async fn handle_message(&self, _sender_id: u32, message: Message) -> Result<()> {
+    /// Handle incoming messages
+    async fn handle_message(&mut self, from_physical_id: u32, message: Message) -> Result<()> {
         match message {
-            Message::Hello { from_node } => {
-                info!("Received Hello from node {}", from_node);
-                // ============ NEW: Update known PIDs ============
-                let mut known = self.known_pids.write().await;
-                if !known.contains(&from_node) {
-                    known.push(from_node);
-                }
-                // Update max if necessary
-                if let Some(&max) = known.iter().max() {
-                    *self.max_known_pid.write().await = max;
-                }
-                // ================================================
-            }
-            Message::HelloAck { from_node } => {
-                info!("Received HelloAck from node {}", from_node);
-            }
-            // ============ CHANGED: Handle new heartbeat fields ============
-            Message::Heartbeat { from_node, timestamp, is_leader, max_known_pid: broadcasted_max } => {
-                debug!("Received Heartbeat from node {} (ts: {}, leader: {}, max_pid: {})", 
-                       from_node, timestamp, is_leader, broadcasted_max);
+            Message::JoinRequest { physical_id, from_address } => {
+                info!("Received JoinRequest from Physical ID {}", physical_id);
+
+                // Store their address
+                self.physical_to_address.write().await.insert(physical_id, from_address.clone());
+
+                // Respond with our current state
+                let my_logical_pid = *self.my_logical_pid.read().await;
+                let my_is_leader = *self.is_leader.read().await;
                 
-                // Update our max_known_pid from leader's broadcast
-                let mut our_max = self.max_known_pid.write().await;
-                if broadcasted_max > *our_max {
-                    info!("Updating max_known_pid from {} to {} (via heartbeat from node {})", 
-                          *our_max, broadcasted_max, from_node);
-                    *our_max = broadcasted_max;
-                }
-                drop(our_max);
-                
-                // If from leader, update last heartbeat time
-                let current_leader = *self.current_leader.read().await;
-                if is_leader || current_leader == Some(from_node) {
-                    *self.last_leader_heartbeat.write().await = Instant::now();
+                // Find next leader's physical ID (logical PID 1)
+                let next_leader_physical = self.logical_to_physical.read().await.get(&1).copied();
+
+                let response = Message::JoinResponse {
+                    physical_id: self.my_physical_id,
+                    logical_pid: my_logical_pid,
+                    is_leader: my_is_leader,
+                    next_leader_physical_id: next_leader_physical,
+                };
+
+                // Connect back if not already connected
+                if !self.peers.read().await.contains_key(&physical_id) {
+                    match self.network.connect_to_peer(&from_address).await {
+                        Ok(conn) => {
+                            conn.send(&response).await?;
+                            self.peers.write().await.insert(physical_id, conn);
+                            info!("Connected to Physical ID {} at {}", physical_id, from_address);
+                        }
+                        Err(e) => {
+                            warn!("Failed to connect to Physical ID {}: {}", physical_id, e);
+                        }
+                    }
+                } else {
+                    if let Some(peer) = self.peers.read().await.get(&physical_id) {
+                        peer.send(&response).await?;
+                    }
                 }
             }
-            // ==============================================================
-            Message::Ping { from_node } => {
-                info!("Received Ping from node {}", from_node);
-                if let Some(peer) = self.peers.read().await.get(&from_node) {
-                    let pong = Message::Pong { from_node: self.id };
-                    peer.send(&pong).await?;
-                }
-            }
-            Message::Pong { from_node } => {
-                info!("Received Pong from node {}", from_node);
-            }
-            // ============ NEW: Handle election messages ============
-            Message::Election { from_node } => {
-                info!("Received Election message from node {}", from_node);
+
+            Message::JoinResponse { physical_id, logical_pid, is_leader, next_leader_physical_id } => {
+                info!("Received JoinResponse from Physical ID {} → Logical PID {}{}", 
+                      physical_id, logical_pid, if is_leader { " (LEADER)" } else { "" });
+
+                // Update mappings
+                self.physical_to_logical.write().await.insert(physical_id, logical_pid);
+                self.logical_to_physical.write().await.insert(logical_pid, physical_id);
+                self.last_heartbeat.write().await.insert(physical_id, Instant::now());
+
+                // Determine our logical PID based on what's taken
+                let p2l = self.physical_to_logical.read().await.clone();
+                let taken_logical_pids: Vec<u32> = p2l.values().copied().collect();
                 
-                // Send OK response (I'm alive)
-                if let Some(peer) = self.peers.read().await.get(&from_node) {
-                    let ok_msg = Message::OK { from_node: self.id };
-                    let _ = peer.send(&ok_msg).await;
+                // Find available logical PID (0, 1, or 2)
+                let mut my_new_pid = None;
+                for pid in [0u32, 1, 2] {
+                    if !taken_logical_pids.contains(&pid) {
+                        my_new_pid = Some(pid);
+                        break;
+                    }
                 }
-                
-                // If I have higher ID and not in election, start my own
-                if !*self.in_election.read().await && self.id > from_node {
-                    info!("Node {} starting own election (higher than {})", self.id, from_node);
-                    *self.in_election.write().await = true;
+
+                if let Some(pid) = my_new_pid {
+                    info!("═══════════════════════════════════════════════════════");
+                    info!("Assigned Logical PID: {}", pid);
+                    info!("Physical ID {} → Logical PID {}", self.my_physical_id, pid);
+                    info!("═══════════════════════════════════════════════════════");
                     
-                    let node_id = self.id;
-                    let peers = self.peers.clone();
-                    let current_leader = self.current_leader.clone();
-                    let max_known_pid = self.max_known_pid.clone();
-                    let known_pids = self.known_pids.clone();
-                    let in_election = self.in_election.clone();
+                    *self.my_logical_pid.write().await = pid;
+                    *self.is_leader.write().await = (pid == 2);
                     
-                    tokio::spawn(async move {
-                        Self::start_election(node_id, peers, current_leader, max_known_pid, known_pids, in_election).await;
-                    });
+                    // Update mappings
+                    self.physical_to_logical.write().await.insert(self.my_physical_id, pid);
+                    self.logical_to_physical.write().await.insert(pid, self.my_physical_id);
                 }
             }
-            Message::OK { from_node } => {
-                info!("Received OK from node {} (they're alive)", from_node);
-            }
-            Message::Coordinator { from_node } => {
-                info!("🎉 Node {} announced as COORDINATOR!", from_node);
+
+            Message::Heartbeat { physical_id, logical_pid, next_leader_physical_id } => {
+                debug!("Heartbeat: Physical ID {} (Logical PID {})", physical_id, logical_pid);
                 
-                // Accept the new leader
-                *self.current_leader.write().await = Some(from_node);
-                *self.last_leader_heartbeat.write().await = Instant::now();
-                *self.in_election.write().await = false;
-            }
-            Message::BecomeLeader { from_node } => {
-                info!("Received BecomeLeader request from node {}", from_node);
+                // Update last seen
+                self.last_heartbeat.write().await.insert(physical_id, Instant::now());
                 
-                // Start election since we're being asked to be leader
-                if !*self.in_election.read().await {
-                    info!("Accepting leadership request, starting election");
-                    *self.in_election.write().await = true;
+                // Update mappings
+                self.physical_to_logical.write().await.insert(physical_id, logical_pid);
+                self.logical_to_physical.write().await.insert(logical_pid, physical_id);
+            }
+
+            Message::LeadershipTakeover { physical_id, new_logical_pid, old_logical_pid } => {
+                info!("═══════════════════════════════════════════════════════");
+                info!("LEADERSHIP TAKEOVER!");
+                info!("Physical ID {} changed: Logical PID {} → {}", physical_id, old_logical_pid, new_logical_pid);
+                info!("═══════════════════════════════════════════════════════");
+                
+                // Update mappings
+                self.physical_to_logical.write().await.insert(physical_id, new_logical_pid);
+                self.logical_to_physical.write().await.remove(&old_logical_pid);
+                self.logical_to_physical.write().await.insert(new_logical_pid, physical_id);
+                
+                self.display_id_mapping().await;
+            }
+
+            Message::ShiftIDs { from_physical_id, from_logical_pid } => {
+                info!("Received ShiftIDs from Physical ID {} (Logical PID {})", from_physical_id, from_logical_pid);
+                
+                let my_current_logical_pid = *self.my_logical_pid.read().await;
+                
+                // Increment our logical PID (0→1, 1→2, 2 stays 2)
+                let new_logical_pid = if my_current_logical_pid < 2 { 
+                    my_current_logical_pid + 1 
+                } else { 
+                    my_current_logical_pid 
+                };
+                
+                if new_logical_pid != my_current_logical_pid {
+                    info!("═══════════════════════════════════════════════════════");
+                    info!("SHIFTING LOGICAL PID!");
+                    info!("Physical ID {}: Logical PID {} → {}", self.my_physical_id, my_current_logical_pid, new_logical_pid);
+                    info!("═══════════════════════════════════════════════════════");
                     
-                    let node_id = self.id;
-                    let peers = self.peers.clone();
-                    let current_leader = self.current_leader.clone();
-                    let max_known_pid = self.max_known_pid.clone();
-                    let known_pids = self.known_pids.clone();
-                    let in_election = self.in_election.clone();
+                    *self.my_logical_pid.write().await = new_logical_pid;
+                    *self.is_leader.write().await = (new_logical_pid == 2);
                     
-                    tokio::spawn(async move {
-                        Self::start_election(node_id, peers, current_leader, max_known_pid, known_pids, in_election).await;
-                    });
+                    // Update mappings
+                    self.physical_to_logical.write().await.remove(&self.my_physical_id);
+                    self.physical_to_logical.write().await.insert(self.my_physical_id, new_logical_pid);
+                    
+                    self.logical_to_physical.write().await.remove(&my_current_logical_pid);
+                    self.logical_to_physical.write().await.insert(new_logical_pid, self.my_physical_id);
+                    
+                    self.display_id_mapping().await;
                 }
             }
-            // =======================================================
         }
+
         Ok(())
     }
 
-    /// Periodic heartbeat to all peers and retry failed connections
+    /// Heartbeat task - sends heartbeat every 5ms
     async fn heartbeat_task(
-        node_id: u32, 
-        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>, 
-        config: Config,
-        current_leader: Arc<RwLock<Option<u32>>>,
-        max_known_pid: Arc<RwLock<u32>>,
-        known_pids: Arc<RwLock<Vec<u32>>>,
+        my_physical_id: u32,
+        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
+        my_logical_pid: Arc<RwLock<u32>>,
+        is_leader: Arc<RwLock<bool>>,
+        logical_to_physical: Arc<RwLock<HashMap<u32, u32>>>,
     ) {
-        let mut ticker = interval(Duration::from_secs(5));
+        let mut ticker = interval(Duration::from_millis(5));
 
         loop {
             ticker.tick().await;
 
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-
-            // ============ NEW: Add election info to heartbeat ============
-            // Check if we're the leader
-            let leader = *current_leader.read().await;
-            let is_leader = leader == Some(node_id);
+            let logical_pid = *my_logical_pid.read().await;
+            let leader = *is_leader.read().await;
             
-            // If we're leader, update our known PIDs
-            if is_leader {
-                let mut known = known_pids.write().await;
-                let peers_lock = peers.read().await;
-                for &peer_id in peers_lock.keys() {
-                    if !known.contains(&peer_id) {
-                        known.push(peer_id);
-                    }
-                }
-                if !known.contains(&node_id) {
-                    known.push(node_id);
-                }
-                drop(peers_lock);
-                
-                // Update max
-                if let Some(&max) = known.iter().max() {
-                    *max_known_pid.write().await = max;
-                }
-            }
-            
-            let max_pid = *max_known_pid.read().await;
+            // If we're leader, include next leader's physical ID
+            let next_leader_physical = if leader {
+                logical_to_physical.read().await.get(&1).copied()
+            } else {
+                None
+            };
 
             let heartbeat = Message::Heartbeat {
-                from_node: node_id,
-                timestamp,
-                is_leader,
-                max_known_pid: max_pid,
+                physical_id: my_physical_id,
+                logical_pid,
+                next_leader_physical_id: next_leader_physical,
             };
-            // ============================================================
 
-            // Send heartbeats to connected peers
             let peers_lock = peers.read().await;
-            for (peer_id, peer) in peers_lock.iter() {
-                if let Err(e) = peer.send(&heartbeat).await {
-                    error!("Failed to send heartbeat to node {}: {}", peer_id, e);
-                }
+            for peer in peers_lock.values() {
+                let _ = peer.send(&heartbeat).await;
             }
-            drop(peers_lock);
+        }
+    }
 
-            // Retry connections to missing peers
-            for node_info in &config.nodes {
-                if node_info.id <= node_id {
+    /// Failure detector - checks for leader failure
+    async fn failure_detector_task(
+        my_physical_id: u32,
+        my_logical_pid: Arc<RwLock<u32>>,
+        is_leader: Arc<RwLock<bool>>,
+        last_heartbeat: Arc<RwLock<HashMap<u32, Instant>>>,
+        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
+        physical_to_logical: Arc<RwLock<HashMap<u32, u32>>>,
+        logical_to_physical: Arc<RwLock<HashMap<u32, u32>>>,
+    ) {
+        const LEADER_TIMEOUT: Duration = Duration::from_millis(50); // 10x heartbeat
+        let mut ticker = interval(Duration::from_millis(10));
+
+        loop {
+            ticker.tick().await;
+
+            let my_logical = *my_logical_pid.read().await;
+            let my_is_leader = *is_leader.read().await;
+
+            // Find physical ID of current leader (logical PID 2)
+            let leader_physical_id = logical_to_physical.read().await.get(&2).copied();
+
+            if let Some(leader_phys_id) = leader_physical_id {
+                if leader_phys_id == my_physical_id {
+                    // We're the leader, nothing to check
                     continue;
                 }
 
-                let has_connection = peers.read().await.contains_key(&node_info.id);
-                
-                if !has_connection {
-                    debug!("Retrying connection to node {} at {}", node_info.id, node_info.address);
-                    
-                    match TcpStream::connect(&node_info.address).await {
-                        Ok(mut stream) => {
-                            let hello = Message::Hello { from_node: node_id };
-                            if let Ok(bytes) = hello.to_bytes() {
-                                if stream.write_all(&bytes).await.is_ok() {
-                                    let conn = PeerConnection::new(stream);
-                                    peers.write().await.insert(node_info.id, conn);
-                                    info!("Successfully reconnected to node {}", node_info.id);
+                // Check if leader has timed out
+                let heartbeats = last_heartbeat.read().await;
+                if let Some(last_hb) = heartbeats.get(&leader_phys_id) {
+                    if last_hb.elapsed() > LEADER_TIMEOUT {
+                        warn!("═══════════════════════════════════════════════════════");
+                        warn!("LEADER FAILURE DETECTED!");
+                        warn!("Physical ID {} (Logical PID 2) has timed out!", leader_phys_id);
+                        warn!("═══════════════════════════════════════════════════════");
+                        
+                        // Am I logical PID 1?
+                        if my_logical == 1 {
+                            info!("I am Logical PID 1 - TAKING OVER AS LEADER!");
+                            
+                            // Shift to logical PID 2
+                            *my_logical_pid.write().await = 2;
+                            *is_leader.write().await = true;
+                            
+                            // Update mappings
+                            physical_to_logical.write().await.insert(my_physical_id, 2);
+                            logical_to_physical.write().await.remove(&1);
+                            logical_to_physical.write().await.remove(&2);
+                            logical_to_physical.write().await.insert(2, my_physical_id);
+                            
+                            // Announce takeover
+                            let takeover = Message::LeadershipTakeover {
+                                physical_id: my_physical_id,
+                                new_logical_pid: 2,
+                                old_logical_pid: 1,
+                            };
+                            
+                            let peers_lock = peers.read().await;
+                            for peer in peers_lock.values() {
+                                let _ = peer.send(&takeover).await;
+                            }
+                            
+                            // Tell others to shift
+                            let shift = Message::ShiftIDs {
+                                from_physical_id: my_physical_id,
+                                from_logical_pid: 2,
+                            };
+                            
+                            for peer in peers_lock.values() {
+                                let _ = peer.send(&shift).await;
+                            }
+                            
+                            info!("═══════════════════════════════════════════════════════");
+                            info!("Physical ID {} is now LEADER (Logical PID 2)", my_physical_id);
+                            info!("═══════════════════════════════════════════════════════");
+                        } else if my_logical == 0 {
+                            // Check if PID 1 also failed
+                            let pid1_physical = logical_to_physical.read().await.get(&1).copied();
+                            
+                            if let Some(pid1_phys) = pid1_physical {
+                                if let Some(pid1_last_hb) = heartbeats.get(&pid1_phys) {
+                                    if pid1_last_hb.elapsed() > LEADER_TIMEOUT {
+                                        warn!("Both Leader and Logical PID 1 have failed!");
+                                        warn!("Physical ID {} (Logical PID 0) taking over!", my_physical_id);
+                                        
+                                        *my_logical_pid.write().await = 2;
+                                        *is_leader.write().await = true;
+                                        
+                                        physical_to_logical.write().await.insert(my_physical_id, 2);
+                                        logical_to_physical.write().await.clear();
+                                        logical_to_physical.write().await.insert(2, my_physical_id);
+                                        
+                                        let takeover = Message::LeadershipTakeover {
+                                            physical_id: my_physical_id,
+                                            new_logical_pid: 2,
+                                            old_logical_pid: 0,
+                                        };
+                                        
+                                        let peers_lock = peers.read().await;
+                                        for peer in peers_lock.values() {
+                                            let _ = peer.send(&takeover).await;
+                                        }
+                                    }
                                 }
                             }
-                        }
-                        Err(_) => {
-                            debug!("Node {} still not reachable, will retry in 5s", node_info.id);
                         }
                     }
                 }
             }
         }
-    }
-
-    // ============ NEW: Election monitor task ============
-    /// Watches for leader failures and triggers elections
-    async fn election_monitor_task(
-        node_id: u32,
-        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
-        current_leader: Arc<RwLock<Option<u32>>>,
-        max_known_pid: Arc<RwLock<u32>>,
-        known_pids: Arc<RwLock<Vec<u32>>>,
-        last_leader_heartbeat: Arc<RwLock<Instant>>,
-        in_election: Arc<RwLock<bool>>,
-    ) {
-        const LEADER_TIMEOUT: Duration = Duration::from_secs(15); // 3x heartbeat
-        let mut ticker = interval(Duration::from_secs(2));
-
-        loop {
-            ticker.tick().await;
-
-            let leader = *current_leader.read().await;
-            let last_hb = *last_leader_heartbeat.read().await;
-            let already_in_election = *in_election.read().await;
-
-            // Detect leader failure
-            if leader.is_some() && last_hb.elapsed() > LEADER_TIMEOUT && !already_in_election {
-                let leader_id = leader.unwrap();
-                warn!("Leader {} timeout! Starting election...", leader_id);
-                
-                *in_election.write().await = true;
-                Self::start_election(node_id, peers.clone(), current_leader.clone(), 
-                                   max_known_pid.clone(), known_pids.clone(), in_election.clone()).await;
-            }
-            
-            // Start initial election if no leader
-            if leader.is_none() && !already_in_election {
-                info!("No leader detected, starting election...");
-                *in_election.write().await = true;
-                Self::start_election(node_id, peers.clone(), current_leader.clone(), 
-                                   max_known_pid.clone(), known_pids.clone(), in_election.clone()).await;
-            }
-        }
-    }
-
-    /// IMPROVED BULLY ALGORITHM - Start an election
-    async fn start_election(
-        node_id: u32,
-        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
-        current_leader: Arc<RwLock<Option<u32>>>,
-        max_known_pid: Arc<RwLock<u32>>,
-        known_pids: Arc<RwLock<Vec<u32>>>,
-        in_election: Arc<RwLock<bool>>,
-    ) {
-        info!("Node {} starting election...", node_id);
-
-        let max_pid = *max_known_pid.read().await;
-
-        // ========== IMPROVED BULLY: Check hint first ==========
-        if node_id < max_pid {
-            info!("My PID ({}) < max_known_pid ({}), asking {} to become leader", 
-                  node_id, max_pid, max_pid);
-            
-            // Send BecomeLeader to max_known_pid
-            let peers_lock = peers.read().await;
-            if let Some(peer) = peers_lock.get(&max_pid) {
-                let msg = Message::BecomeLeader { from_node: node_id };
-                if let Err(e) = peer.send(&msg).await {
-                    warn!("Failed to contact node {}: {}", max_pid, e);
-                } else {
-                    info!("Sent BecomeLeader to node {}", max_pid);
-                }
-            } else {
-                warn!("Max PID node {} not connected", max_pid);
-            }
-            drop(peers_lock);
-            
-            // Wait for response
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            
-            if current_leader.read().await.is_some() {
-                info!("Node {} became leader, election complete", max_pid);
-                *in_election.write().await = false;
-                return;
-            }
-            
-            warn!("Max PID node {} didn't respond, falling back to Bully", max_pid);
-        }
-
-        // ========== If my_PID >= max OR fallback ==========
-        if node_id >= max_pid {
-            info!("My PID ({}) >= max_known_pid ({}), becoming leader", node_id, max_pid);
-            Self::become_leader(node_id, peers, current_leader, known_pids, in_election).await;
-            return;
-        }
-
-        // ========== Standard Bully fallback ==========
-        info!("Falling back to standard Bully");
-        let mut higher_nodes = vec![];
-        let peers_lock = peers.read().await;
-        for &peer_id in peers_lock.keys() {
-            if peer_id > node_id {
-                higher_nodes.push(peer_id);
-            }
-        }
-        drop(peers_lock);
-
-        if higher_nodes.is_empty() {
-            info!("Node {} is highest, becoming leader", node_id);
-            Self::become_leader(node_id, peers, current_leader, known_pids, in_election).await;
-            return;
-        }
-
-        // Send Election to higher nodes
-        info!("Contacting {} higher nodes: {:?}", higher_nodes.len(), higher_nodes);
-        let election_msg = Message::Election { from_node: node_id };
-
-        let peers_lock = peers.read().await;
-        for &higher_id in &higher_nodes {
-            if let Some(peer) = peers_lock.get(&higher_id) {
-                let _ = peer.send(&election_msg).await;
-            }
-        }
-        drop(peers_lock);
-
-        // Wait for them to take over
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        
-        if current_leader.read().await.is_some() {
-            info!("Higher node became leader");
-            *in_election.write().await = false;
-            return;
-        }
-
-        // No one responded, we win
-        info!("No responses, becoming leader");
-        Self::become_leader(node_id, peers, current_leader, known_pids, in_election).await;
-    }
-
-    /// Become the leader and announce
-    async fn become_leader(
-        node_id: u32,
-        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
-        current_leader: Arc<RwLock<Option<u32>>>,
-        known_pids: Arc<RwLock<Vec<u32>>>,
-        in_election: Arc<RwLock<bool>>,
-    ) {
-        info!("🎉 Node {} is now the LEADER!", node_id);
-        
-        *current_leader.write().await = Some(node_id);
-        *in_election.write().await = false;
-        
-        // Initialize known_pids with connected peers
-        let mut known = known_pids.write().await;
-        known.clear();
-        known.push(node_id);
-        
-        let peers_lock = peers.read().await;
-        for &peer_id in peers_lock.keys() {
-            known.push(peer_id);
-        }
-        drop(peers_lock);
-
-        // Announce to all
-        let coordinator_msg = Message::Coordinator { from_node: node_id };
-        let peers_lock = peers.read().await;
-        for (peer_id, peer) in peers_lock.iter() {
-            if let Err(e) = peer.send(&coordinator_msg).await {
-                error!("Failed to announce to node {}: {}", peer_id, e);
-            }
-        }
-    }
-    // ====================================================
-
-    /// Broadcast a message to all peers
-    #[allow(dead_code)]
-    pub async fn broadcast(&self, message: &Message) -> Result<()> {
-        let peers = self.peers.read().await;
-        for (peer_id, peer) in peers.iter() {
-            if let Err(e) = peer.send(message).await {
-                error!("Failed to send to node {}: {}", peer_id, e);
-            }
-        }
-        Ok(())
     }
 }

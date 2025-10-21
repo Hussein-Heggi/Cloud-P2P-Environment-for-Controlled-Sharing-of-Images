@@ -1,44 +1,43 @@
 use serde::{Deserialize, Serialize};
 
-/// Message types for inter-node communication
+/// Message types for the dynamic ID system
+/// NOTE: All messages use PHYSICAL_ID for addressing, LOGICAL_PID for roles
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
-    /// Initial handshake when connecting
-    Hello { from_node: u32 },
-    
-    /// Response to hello
-    HelloAck { from_node: u32 },
-    
-    // ============ CHANGED: Added election-related fields ============
-    /// Periodic heartbeat to detect failures
-    /// NOW INCLUDES: is_leader flag and max_known_pid hint
-    Heartbeat { 
-        from_node: u32, 
-        timestamp: u64,
-        is_leader: bool,          // NEW: Is this node the leader?
-        max_known_pid: u32,       // NEW: Highest PID the leader knows about
+    /// Join announcement - new node entering network
+    /// Physical ID is static (from config), Logical PID is assigned dynamically
+    JoinRequest { 
+        physical_id: u32,       // My physical ID (from config, never changes)
+        from_address: String,   // My address
     },
-    // ================================================================
     
-    /// Test message for verifying connectivity
-    Ping { from_node: u32 },
+    /// Response to join request with current state
+    JoinResponse { 
+        physical_id: u32,       // Responder's physical ID
+        logical_pid: u32,       // Responder's current logical PID (0, 1, or 2)
+        is_leader: bool,        // Is responder the leader?
+        next_leader_physical_id: Option<u32>, // Physical ID of node with logical PID 1
+    },
     
-    /// Response to ping
-    Pong { from_node: u32 },
+    /// Simple heartbeat - includes both IDs for mapping
+    Heartbeat { 
+        physical_id: u32,                       // Who I am physically
+        logical_pid: u32,                       // My current role (0, 1, or 2)
+        next_leader_physical_id: Option<u32>,   // Physical ID of next leader (if I'm leader)
+    },
     
-    // ============ NEW: Election message types ============
-    /// Election message - asking if you're alive and can be leader
-    Election { from_node: u32 },
+    /// Leader failure detected - node with logical PID 1 announces takeover
+    LeadershipTakeover {
+        physical_id: u32,           // My physical ID (never changes)
+        new_logical_pid: u32,       // Always 2 (I'm new leader)
+        old_logical_pid: u32,       // What my logical PID was (should be 1)
+    },
     
-    /// OK response - I'm alive and will handle the election
-    OK { from_node: u32 },
-    
-    /// Coordinator announcement - declaring leadership
-    Coordinator { from_node: u32 },
-    
-    /// Request to become leader (sent to max_known_pid when my PID is lower)
-    BecomeLeader { from_node: u32 },
-    // ====================================================
+    /// Notify nodes to shift their logical PIDs after leader failure
+    ShiftIDs {
+        from_physical_id: u32,      // Physical ID of sender
+        from_logical_pid: u32,      // Logical PID of sender (should be 2 = new leader)
+    },
 }
 
 impl Message {
@@ -52,23 +51,5 @@ impl Message {
         bytes.extend_from_slice(json.as_bytes());
         
         Ok(bytes)
-    }
-    
-    /// Get the sender's node ID from any message
-    #[allow(dead_code)]
-    pub fn sender_id(&self) -> u32 {
-        match self {
-            Message::Hello { from_node } => *from_node,
-            Message::HelloAck { from_node } => *from_node,
-            Message::Heartbeat { from_node, .. } => *from_node,
-            Message::Ping { from_node } => *from_node,
-            Message::Pong { from_node } => *from_node,
-            // ============ NEW: Handle new message types ============
-            Message::Election { from_node } => *from_node,
-            Message::OK { from_node } => *from_node,
-            Message::Coordinator { from_node } => *from_node,
-            Message::BecomeLeader { from_node } => *from_node,
-            // =======================================================
-        }
     }
 }
