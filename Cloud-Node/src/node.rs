@@ -471,19 +471,27 @@ impl Node {
                     }
                 }
                 
-                // If I'm leader, respond with coordinator
-                if *self.am_i_leader.read().await {
-                    let successor = *self.current_successor.read().await;
+                // All nodes respond with their known leader info (not just the leader)
+                let am_leader = *self.am_i_leader.read().await;
+                let known_leader = *self.current_leader.read().await;
+                let known_successor = *self.current_successor.read().await;
+                
+                // Send coordinator info we know about
+                if let Some(leader_id) = known_leader {
                     let coordinator = Message::Coordinator {
-                        leader_id: self.my_id,
-                        successor_id: successor,
+                        leader_id,
+                        successor_id: known_successor,
                     };
                     
                     if let Some(conn) = self.peers.read().await.get(&node_id) {
                         let _ = conn.send(&coordinator).await;
+                        info!("📤 Sent coordinator info to Node {}: Leader={}, Successor={:?}", 
+                              node_id, leader_id, known_successor);
                     }
-                    
-                    // Add to alive nodes
+                }
+                
+                // If I'm the leader, also add this node to alive set
+                if am_leader {
                     self.alive_nodes.write().await.insert(node_id);
                 }
             }
