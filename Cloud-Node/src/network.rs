@@ -143,7 +143,7 @@ impl PeerConnection {
     }
     
     /// Receive one message from this peer
-    async fn receive_one(&self) -> Result<Message> {
+    pub async fn receive_one(&self) -> Result<Message> {
         let mut stream = self.stream.lock().await;
         
         // Read length prefix (4 bytes)

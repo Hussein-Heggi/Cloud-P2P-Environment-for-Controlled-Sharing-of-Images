@@ -134,8 +134,17 @@ impl Node {
                     if let Err(e) = conn.send(&discovery_msg).await {
                         warn!("Failed to send discovery to {}: {}", node.address, e);
                     } else {
-                        self.peers.write().await.insert(node.id, conn);
+                        self.peers.write().await.insert(node.id, conn.clone());
                         connected = true;
+                        
+                        // Start read loop for outgoing connection
+                        let node_id = node.id;
+                        let tx = self.message_tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = Self::read_from_peer(node_id, conn, tx).await {
+                                debug!("Read loop ended for node {}: {}", node_id, e);
+                            }
+                        });
                     }
                 }
                 Err(e) => {
@@ -174,6 +183,33 @@ impl Node {
             if matches!(msg, Message::Coordinator { .. }) {
                 self.handle_message(msg).await;
                 return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Helper to read from a peer connection and forward messages to channel
+    async fn read_from_peer(
+        node_id: u32,
+        conn: PeerConnection,
+        tx: mpsc::UnboundedSender<(u32, Message)>,
+    ) -> Result<()> {
+        loop {
+            match conn.receive_one().await {
+                Ok(message) => {
+                    if tx.send((node_id, message)).is_err() {
+                        warn!("Channel closed for Node {}", node_id);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    if e.to_string().contains("UnexpectedEof") {
+                        debug!("Connection closed: Node {}", node_id);
+                    } else {
+                        debug!("Read error from Node {}: {}", node_id, e);
+                    }
+                    break;
+                }
             }
         }
         Ok(())
