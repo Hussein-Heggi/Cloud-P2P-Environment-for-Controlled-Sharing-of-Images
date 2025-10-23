@@ -8,7 +8,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 
 /// Manages TCP connections between nodes
-/// Uses Physical IDs as keys for all operations
 #[derive(Clone)]
 pub struct NetworkLayer {
     listen_addr: String,
@@ -22,14 +21,14 @@ impl NetworkLayer {
     /// Start listening for incoming connections
     pub async fn start_listener(
         &self,
-        tx: mpsc::UnboundedSender<(u32, Message)>,  // Physical ID, Message
-        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,  // Physical ID → Connection
+        tx: mpsc::UnboundedSender<(u32, Message)>,
+        peers: Arc<RwLock<HashMap<u32, PeerConnection>>>,
     ) -> Result<()> {
         let listener = TcpListener::bind(&self.listen_addr)
             .await
             .context(format!("Failed to bind to {}", self.listen_addr))?;
 
-        info!("Listening on {}", self.listen_addr);
+        info!("📡 Listening on {}", self.listen_addr);
 
         loop {
             match listener.accept().await {
@@ -59,52 +58,50 @@ impl NetworkLayer {
         let peer_conn = PeerConnection::new(stream);
         let read_conn = peer_conn.clone();
         
-        // Read first message to discover physical ID
+        // Read first message to identify the node
         let first_msg = read_conn.receive_one().await?;
         
-        // Extract physical ID from first message
-        let physical_id = match &first_msg {
-            Message::JoinRequest { physical_id, .. } => *physical_id,
-            Message::Heartbeat { physical_id, .. } => *physical_id,
-            _ => {
-                warn!("First message doesn't contain physical ID");
-                return Ok(());
-            }
+        // Extract node ID from first message
+        let node_id = match &first_msg {
+            Message::WhoIsLeader { node_id, .. } => *node_id,
+            Message::Heartbeat { node_id } => *node_id,
+            Message::Coordinator { leader_id, .. } => *leader_id,
+            Message::Takeover { from_id } => *from_id,
         };
         
-        info!("Identified incoming connection: Physical ID {}", physical_id);
+        info!("🔌 Connection identified: Node {}", node_id);
         
-        // Store connection indexed by physical ID
-        peers.write().await.insert(physical_id, peer_conn.clone());
+        // Store connection
+        peers.write().await.insert(node_id, peer_conn.clone());
         
         // Forward first message
-        tx.send((physical_id, first_msg))?;
+        tx.send((node_id, first_msg))?;
         
         // Continue reading messages
-        Self::read_loop(physical_id, read_conn, tx).await?;
+        Self::read_loop(node_id, read_conn, tx).await?;
         
         Ok(())
     }
 
     /// Continuous read loop for a connection
     async fn read_loop(
-        physical_id: u32,
+        node_id: u32,
         conn: PeerConnection,
         tx: mpsc::UnboundedSender<(u32, Message)>,
     ) -> Result<()> {
         loop {
             match conn.receive_one().await {
                 Ok(message) => {
-                    if tx.send((physical_id, message)).is_err() {
-                        warn!("Channel closed for Physical ID {}", physical_id);
+                    if tx.send((node_id, message)).is_err() {
+                        warn!("Channel closed for Node {}", node_id);
                         break;
                     }
                 }
                 Err(e) => {
                     if e.to_string().contains("UnexpectedEof") {
-                        debug!("Connection closed: Physical ID {}", physical_id);
+                        debug!("Connection closed: Node {}", node_id);
                     } else {
-                        error!("Read error from Physical ID {}: {}", physical_id, e);
+                        error!("Read error from Node {}: {}", node_id, e);
                     }
                     break;
                 }
@@ -119,7 +116,7 @@ impl NetworkLayer {
             .await
             .context(format!("Failed to connect to {}", peer_addr))?;
 
-        info!("Connected to {}", peer_addr);
+        info!("🔗 Connected to {}", peer_addr);
         Ok(PeerConnection::new(stream))
     }
 }
