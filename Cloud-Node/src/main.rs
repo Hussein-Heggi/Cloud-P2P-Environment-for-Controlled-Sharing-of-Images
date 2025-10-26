@@ -576,22 +576,22 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // Default config
-    // let config_json = r#"{
-    //     "nodes": [
-    //         {"id": 0, "address": "10.40.61.79:8080"},
-    //         {"id": 1, "address": "10.40.58.169:8081"},
-    //         {"id": 2, "address": "10.40.50.93:8083"}
-    //     ]
-    // }"#;
-
+    //Default config
     let config_json = r#"{
         "nodes": [
-            {"id": 0, "address": "127.0.0.1:8080"},
-            {"id": 1, "address": "127.0.0.1:8081"},
-            {"id": 2, "address": "127.0.0.1:8083"}
+            {"id": 0, "address": "10.40.61.79:8080"},
+            {"id": 1, "address": "10.40.58.169:8081"},
+            {"id": 2, "address": "10.40.50.93:8083"}
         ]
     }"#;
+
+    // let config_json = r#"{
+    //     "nodes": [
+    //         {"id": 0, "address": "127.0.0.1:8080"},
+    //         {"id": 1, "address": "127.0.0.1:8081"},
+    //         {"id": 2, "address": "127.0.0.1:8083"}
+    //     ]
+    // }"#;
 
     let config: Config = if let Some(config_path) = args.config {
         let config_str = tokio::fs::read_to_string(config_path).await?;
