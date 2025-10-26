@@ -8,6 +8,10 @@ use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, interval};
 
+// === Failure-detection tuning ===
+const LEADER_TIMEOUT_SECS: u64 = 5;  // follower waits this long for leader heartbeat
+const PEER_EXPIRY_SECS: u64 = 6;     // leader prunes peers that haven't ACKed in this long
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 enum Message {
@@ -83,7 +87,7 @@ impl Node {
 
         let address: SocketAddr = node_config.address.parse()?;
         let socket = UdpSocket::bind(address).await?;
-        
+
         let mut all_nodes = HashMap::new();
         for node in &config.nodes {
             all_nodes.insert(node.id, node.address.parse()?);
@@ -147,15 +151,14 @@ impl Node {
         // Gather candidates from active nodes and ensure self is included
         let mut ids: Vec<u32> = active_nodes.keys().copied().collect();
         ids.push(self.id);
-    
+
         // De-dup and sort descending
         ids.sort_unstable_by(|a, b| b.cmp(a));
         ids.dedup();
-    
+
         // Exclude the leader (or any exclude_id) and return the highest remaining
         ids.into_iter().find(|&id| id != exclude_id)
     }
-    
 
     async fn discover_cluster(&self) {
         println!("Node {}: Starting cluster discovery...", self.id);
@@ -196,7 +199,7 @@ impl Node {
 
         // Check if we have a successor hint
         let successor_hint = *self.successor_hint.read().await;
-        
+
         // IMPROVED BULLY: Check if we ARE the successor
         if let Some(successor_id) = successor_hint {
             if successor_id == self.id {
@@ -207,19 +210,19 @@ impl Node {
             } else if successor_id > self.id {
                 // We know about a higher successor, defer to it first
                 println!("Node {}: Deferring to known successor Node {}", self.id, successor_id);
-                
+
                 let election_msg = Message::Election {
                     sender_id: self.id,
                     timestamp: current_timestamp(),
                 };
-                
+
                 if let Some(successor_addr) = self.all_nodes.get(&successor_id) {
                     self.send_message(successor_addr, &election_msg).await;
                 }
-                
+
                 // Wait briefly for successor to respond
                 sleep(Duration::from_millis(800)).await;
-                
+
                 // Check if we got a response
                 let state = self.state.read().await;
                 if *state == NodeState::Leader {
@@ -228,7 +231,7 @@ impl Node {
                     return;
                 }
                 drop(state);
-                
+
                 // Successor didn't respond, fall back to normal election
                 println!("Node {}: Successor didn't respond, falling back to normal election", self.id);
             }
@@ -274,18 +277,18 @@ impl Node {
 
     async fn become_leader(&self) {
         println!("Node {}: Becoming leader!", self.id);
-    
+
         *self.state.write().await = NodeState::Leader;
         *self.current_leader.write().await = Some(self.id);
         *self.last_heartbeat.write().await = SystemTime::now();
-    
-        // NEW: successor_hint is meaningless for a leader—clear it
+
+        // Clear successor hint for a leader
         *self.successor_hint.write().await = None;
-    
-        // (Optional) clear any stale active_nodes, start fresh
+
+        // Clear stale active_nodes, start fresh
         self.active_nodes.write().await.clear();
-    
-        // announce...
+
+        // Announce...
         let coordinator_msg = Message::Coordinator {
             leader_id: self.id,
             timestamp: current_timestamp(),
@@ -296,28 +299,50 @@ impl Node {
             }
         }
     }
-    
+
     async fn send_heartbeats(&self) {
-        let mut interval = interval(Duration::from_secs(2));
-        
+        let mut tick = interval(Duration::from_secs(2));
+
         loop {
-            interval.tick().await;
-            
+            tick.tick().await;
+
             let state = self.state.read().await;
             if *state == NodeState::Leader {
                 drop(state);
-                
-                // Calculate successor from active nodes
+
+                // === PRUNE STALE PEERS: consider nodes that haven't ACKed within PEER_EXPIRY_SECS as down
+                {
+                    let mut active = self.active_nodes.write().await;
+                    let now = SystemTime::now();
+                    let mut removed: Vec<u32> = Vec::new();
+                    active.retain(|peer_id, last_seen| {
+                        let alive = now
+                            .duration_since(*last_seen)
+                            .unwrap_or(Duration::from_secs(0))
+                            < Duration::from_secs(PEER_EXPIRY_SECS);
+                        if !alive {
+                            removed.push(*peer_id);
+                        }
+                        alive
+                    });
+                    if !removed.is_empty() {
+                        println!(
+                            "Node {}: detected peer(s) DOWN (no ACK in {}s): {:?}",
+                            self.id, PEER_EXPIRY_SECS, removed
+                        );
+                    }
+                }
+
+                // Calculate successor from active nodes (exclude current leader safely)
                 let active_nodes = self.active_nodes.read().await;
-                // exclude self (the leader) to get the next-highest active node
-                let successor_id = self.calculate_successor(&active_nodes, self.current_leader.read().await.unwrap());
+                let exclude = self.current_leader.read().await.unwrap_or(self.id);
+                let successor_id = self.calculate_successor(&active_nodes, exclude);
                 drop(active_nodes);
 
                 if let Some(succ_id) = successor_id {
                     println!("Node {}: Current successor is Node {}", self.id, succ_id);
                 }
 
-                
                 let heartbeat_msg = Message::Heartbeat {
                     leader_id: self.id,
                     successor_id,
@@ -334,26 +359,28 @@ impl Node {
     }
 
     async fn monitor_leader(&self) {
-        let mut interval = interval(Duration::from_secs(1));
-        
+        let mut tick = interval(Duration::from_secs(1));
+
         loop {
-            interval.tick().await;
-            
+            tick.tick().await;
+
             let state = self.state.read().await;
             if *state != NodeState::Leader {
                 drop(state);
-                
+
                 let last_hb = self.last_heartbeat.read().await;
                 let elapsed = SystemTime::now()
                     .duration_since(*last_hb)
                     .unwrap_or(Duration::from_secs(0));
-                
                 drop(last_hb);
-                
-                if elapsed > Duration::from_secs(5) {
+
+                if elapsed > Duration::from_secs(LEADER_TIMEOUT_SECS) {
                     let election_in_progress = *self.election_in_progress.read().await;
                     if !election_in_progress {
-                        println!("Node {}: Leader timeout detected!", self.id);
+                        println!(
+                            "Node {}: Leader timeout detected! (> {}s)",
+                            self.id, LEADER_TIMEOUT_SECS
+                        );
                         *self.current_leader.write().await = None;
                         self.start_election().await;
                     }
@@ -364,7 +391,7 @@ impl Node {
 
     async fn listen(&self) {
         let mut buf = [0u8; 4096];
-        
+
         loop {
             match self.socket.recv_from(&mut buf).await {
                 Ok((len, addr)) => {
@@ -386,22 +413,22 @@ impl Node {
                 let mut active_nodes = self.active_nodes.write().await;
                 active_nodes.insert(sender_id, SystemTime::now());
                 drop(active_nodes);
-                
+
                 let state = self.state.read().await;
                 if *state == NodeState::Leader {
                     drop(state);
-                    
+
                     let response = Message::LeaderAnnounce {
                         leader_id: self.id,
                         timestamp: current_timestamp(),
                     };
-                    
+
                     if let Some(sender_addr) = self.all_nodes.get(&sender_id) {
                         self.send_message(sender_addr, &response).await;
                     }
                 }
             }
-            
+
             Message::LeaderAnnounce { leader_id, .. } => {
                 let current = *self.current_leader.read().await;
                 if current.is_none() || leader_id > current.unwrap() {
@@ -411,24 +438,24 @@ impl Node {
                     *self.last_heartbeat.write().await = SystemTime::now();
                 }
             }
-            
+
             Message::Election { sender_id, .. } => {
                 // Track that this node is active
                 let mut active_nodes = self.active_nodes.write().await;
                 active_nodes.insert(sender_id, SystemTime::now());
                 drop(active_nodes);
-                
+
                 if sender_id < self.id {
                     // We have higher ID, send OK and start our own election
                     let ok_msg = Message::ElectionOk {
                         sender_id: self.id,
                         timestamp: current_timestamp(),
                     };
-                    
+
                     if let Some(sender_addr) = self.all_nodes.get(&sender_id) {
                         self.send_message(sender_addr, &ok_msg).await;
                     }
-                    
+
                     // Start our own election
                     let election_in_progress = *self.election_in_progress.read().await;
                     if !election_in_progress {
@@ -437,39 +464,39 @@ impl Node {
                     }
                 }
             }
-            
+
             Message::ElectionOk { sender_id, .. } => {
                 println!("Node {}: Higher node {} responded to election", self.id, sender_id);
                 *self.state.write().await = NodeState::Follower;
             }
-            
+
             Message::Coordinator { leader_id, .. } => {
                 println!("Node {}: New coordinator is Node {}", self.id, leader_id);
                 *self.current_leader.write().await = Some(leader_id);
                 *self.state.write().await = NodeState::Follower;
                 *self.last_heartbeat.write().await = SystemTime::now();
             }
-            
+
             Message::Heartbeat { leader_id, successor_id, .. } => {
                 let current = *self.current_leader.read().await;
                 if current == Some(leader_id) {
                     *self.last_heartbeat.write().await = SystemTime::now();
-                    
+
                     // Store successor hint
                     *self.successor_hint.write().await = successor_id;
-                    
+
                     // Send acknowledgment back to leader
                     let ack_msg = Message::HeartbeatAck {
                         sender_id: self.id,
                         timestamp: current_timestamp(),
                     };
-                    
+
                     if let Some(leader_addr) = self.all_nodes.get(&leader_id) {
                         self.send_message(leader_addr, &ack_msg).await;
                     }
                 }
             }
-            
+
             Message::HeartbeatAck { sender_id, .. } => {
                 // Leader receives acks to track active nodes
                 let state = self.state.read().await;
@@ -492,7 +519,7 @@ impl Node {
         let mut interval = interval(Duration::from_secs(5));
         loop {
             interval.tick().await;
-    
+
             let state = self.state.read().await.clone();
             let leader = *self.current_leader.read().await;
             let last_hb = self.last_heartbeat.read().await;
@@ -501,17 +528,18 @@ impl Node {
                 .unwrap_or(Duration::from_secs(0))
                 .as_secs_f64();
             drop(last_hb);
-    
+
             if state == NodeState::Leader {
                 // Leader: compute successor from current acks
                 let active_nodes = self.active_nodes.read().await;
                 let computed_succ = self.calculate_successor(&active_nodes, self.id);
-                let active_count = active_nodes.len()+1; // acks from others only
+                let active_count = active_nodes.len() + 1; // include self
+                let live_peers: Vec<u32> = active_nodes.keys().copied().collect();
                 drop(active_nodes);
-    
+
                 println!(
-                    "Node {} Status: State={:?}, Leader={:?}, Successor(computed)={:?}, Active nodes={}, Time since heartbeat={:.1}s",
-                    self.id, state, leader, computed_succ, active_count, elapsed
+                    "Node {} Status: State={:?}, Leader={:?}, Successor(computed)={:?}, Active nodes={}, Live={:?}, Time since heartbeat={:.1}s",
+                    self.id, state, leader, computed_succ, active_count, live_peers, elapsed
                 );
             } else {
                 // Follower: show the hint learned from leader heartbeats
@@ -523,7 +551,7 @@ impl Node {
             }
         }
     }
-}    
+}
 
 fn current_timestamp() -> u64 {
     SystemTime::now()
@@ -538,7 +566,7 @@ struct Args {
     /// Node ID (0, 1, or 2)
     #[arg(short, long)]
     id: u32,
-    
+
     /// Config file path (optional, will use default if not provided)
     #[arg(short, long)]
     config: Option<String>,
@@ -547,8 +575,16 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    
+
     // Default config
+    // let config_json = r#"{
+    //     "nodes": [
+    //         {"id": 0, "address": "10.40.61.79:8080"},
+    //         {"id": 1, "address": "10.40.58.169:8081"},
+    //         {"id": 2, "address": "10.40.50.93:8083"}
+    //     ]
+    // }"#;
+
     let config_json = r#"{
         "nodes": [
             {"id": 0, "address": "127.0.0.1:8080"},
@@ -556,27 +592,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {"id": 2, "address": "127.0.0.1:8083"}
         ]
     }"#;
-    
+
     let config: Config = if let Some(config_path) = args.config {
         let config_str = tokio::fs::read_to_string(config_path).await?;
         serde_json::from_str(&config_str)?
     } else {
         serde_json::from_str(config_json)?
     };
-    
+
     let node = Arc::new(Node::new(args.id, &config).await?);
-    node.start().await;
-    
+    node.clone().start().await; // clone so we keep 'node' alive for potential future use
+
     // Keep running
     tokio::signal::ctrl_c().await?;
     println!("\nShutting down node {}...", args.id);
-    
+
     Ok(())
 }
-// let config_json = r#"{
-//     "nodes": [
-//         {"id": 0, "address": "10.40.61.79:8080"},
-//         {"id": 1, "address": "10.40.58.169:8081"},
-//         {"id": 2, "address": "10.40.50.93:8083"}
-//     ]
-// }"#;
