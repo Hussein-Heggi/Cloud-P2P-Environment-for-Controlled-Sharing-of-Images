@@ -18,6 +18,5 @@ pub async fn run_failure_simulation(state: SharedState, cfg: Config) {
             s.ignoring = false;
             warn!("Revived from simulated failure");
         }
-        election::reconcile_state_after_revive().await;
     }
 }

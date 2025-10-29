@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
+use std::future;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::UdpSocket,
@@ -205,7 +206,7 @@ impl Node {
                 {
                     let mut active = self.active_nodes.write().await;
                     let now = SystemTime::now();
-                    active.retain(|peer_id, last_seen| {
+                    active.retain(|_peer_id, last_seen| {
                         now.duration_since(*last_seen).unwrap_or(Duration::ZERO) < Duration::from_secs(PEER_EXPIRY_SECS)
                     });
                 }
@@ -376,7 +377,8 @@ fn now_ts() -> u64 {
 pub async fn run_election_loop(state: SharedState, cfg: Config, leader_tx: watch::Sender<u32>) {
     let node = Arc::new(Node::new(&cfg, leader_tx, state).await.expect("election init"));
     node.clone().start().await;
-    futures::future::pending::<()>().await;
+    future::pending::<()>().await;
+
 }
 
 pub async fn handle_leader_changes(_state: SharedState, mut _rx: watch::Receiver<u32>) {
@@ -385,6 +387,3 @@ pub async fn handle_leader_changes(_state: SharedState, mut _rx: watch::Receiver
     while _rx.changed().await.is_ok() {}
 }
 
-pub async fn reconcile_state_after_revive() {
-    // Optional: on simulated failure recovery you could re-run discovery.
-}

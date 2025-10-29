@@ -11,7 +11,7 @@ pub struct Row {
     pub version: u64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct HistoryState {
     pub rows: HashMap<u32, Row>,
     pub rr_next: usize,

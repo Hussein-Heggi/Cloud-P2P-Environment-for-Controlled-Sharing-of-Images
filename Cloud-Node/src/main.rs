@@ -1,13 +1,14 @@
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
 use tracing::info;
+use clap::Parser;
+
 
 mod config;
 mod state;
 mod election;
 mod udp;
 mod failure;
-mod reconcile;
 mod stego_service;
 
 use crate::state::ServerState;
@@ -46,5 +47,6 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move { election::handle_leader_changes(st, leader_rx).await; });
     }
 
-    futures::future::pending::<()>().await
+    tokio::signal::ctrl_c().await?;
+    Ok(())
 }
