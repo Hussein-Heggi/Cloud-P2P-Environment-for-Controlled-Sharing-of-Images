@@ -6,7 +6,8 @@ use std::{fs, net::{SocketAddr, UdpSocket}, process::Command, time::Duration};
 #[command(name = "client")]
 struct Cli {
     /// Comma-separated peers (ip:port) — must match servers
-    #[arg(long, default_value = "10.40.61.79:8080,10.40.58.169:8081,10.40.50.93:8083")]
+    // #[arg(long, default_value = "10.40.61.79:8080,10.40.58.169:8081,10.40.50.93:8083")]
+    #[arg(long, default_value = "10.40.58.169:8181")]
     peers: String,
 
     /// Number of OS processes to spawn

@@ -30,7 +30,7 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
     let sock = UdpSocket::bind(addr).await?;
     info!("Service UDP listening on {}", addr);
 
-    let peers = Config::peer_addrs();
+    let peers = Config::service_peer_addrs();
     let start = Instant::now();
 
     let mut buf = vec![0u8; 64 * 1024];
