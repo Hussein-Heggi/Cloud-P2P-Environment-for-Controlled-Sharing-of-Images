@@ -1,23 +1,20 @@
+use crate::{config::Config, state::SharedState};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use std::future;
-use serde::{Deserialize, Serialize};
 use tokio::{
     net::UdpSocket,
-    sync::{RwLock, watch},
-    time::{sleep, interval},
+    sync::{watch, RwLock},
+    time::{interval, sleep},
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
-use crate::{state::SharedState, config::Config};
-
-// === Failure-detection tuning ===
-const LEADER_TIMEOUT_SECS: u64 = 5;  // follower waits this long for leader heartbeat
-const PEER_EXPIRY_SECS: u64 = 6;     // leader prunes peers that haven't ACKed in this long
+const LEADER_TIMEOUT_SECS: u64 = 5;
+const PEER_EXPIRY_SECS: u64 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -32,358 +29,586 @@ enum Message {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum NodeState { Follower, Candidate, Leader }
-
-struct Node {
-    id: u32,
-    address: SocketAddr,
-    all_nodes: HashMap<u32, SocketAddr>,
-    state: Arc<RwLock<NodeState>>,
-    current_leader: Arc<RwLock<Option<u32>>>,
-    successor_hint: Arc<RwLock<Option<u32>>>,
-    active_nodes: Arc<RwLock<HashMap<u32, SystemTime>>>,
-    last_heartbeat: Arc<RwLock<SystemTime>>,
-    election_in_progress: Arc<RwLock<bool>>,
-    socket: Arc<UdpSocket>,
-
-    // Integration hooks:
-    leader_tx: watch::Sender<u32>,
-    shared: SharedState,
-}
-
-impl Node {
-    async fn new(cfg: &Config, leader_tx: watch::Sender<u32>, shared: SharedState) -> anyhow::Result<Self> {
-        let id = cfg.node_id;
-        let address: SocketAddr = cfg.election_bind_addr();
-        let socket = UdpSocket::bind(address).await?;
-
-        // Build election peer list (ip: port+100)
-        let mut all_nodes = HashMap::new();
-        for (idx, addr) in Config::election_peer_addrs().into_iter().enumerate() {
-            let node_id = (idx as u32) + 1;
-            all_nodes.insert(node_id, addr);
-        }
-
-        info!("Election node {} starting at {}", id, address);
-
-        Ok(Self {
-            id,
-            address,
-            all_nodes,
-            state: Arc::new(RwLock::new(NodeState::Follower)),
-            current_leader: Arc::new(RwLock::new(None)),
-            successor_hint: Arc::new(RwLock::new(None)),
-            active_nodes: Arc::new(RwLock::new(HashMap::new())),
-            last_heartbeat: Arc::new(RwLock::new(SystemTime::now())),
-            election_in_progress: Arc::new(RwLock::new(false)),
-            socket: Arc::new(socket),
-            leader_tx,
-            shared,
-        })
-    }
-
-    async fn start(self: Arc<Self>) {
-        // listener
-        let node_clone = self.clone();
-        tokio::spawn(async move { node_clone.listen().await; });
-
-        sleep(Duration::from_millis(300)).await;
-
-        // discovery
-        self.discover_cluster().await;
-
-        // monitors
-        let node_clone = self.clone();
-        tokio::spawn(async move { node_clone.monitor_leader().await; });
-
-        let node_clone = self.clone();
-        tokio::spawn(async move { node_clone.send_heartbeats().await; });
-
-        let node_clone = self.clone();
-        tokio::spawn(async move { node_clone.report_status().await; });
-
-        info!("Election: node {} started", self.id);
-    }
-
-    fn calculate_successor(&self, active_nodes: &HashMap<u32, SystemTime>, exclude_id: u32) -> Option<u32> {
-        let mut ids: Vec<u32> = active_nodes.keys().copied().collect();
-        ids.push(self.id);
-        ids.sort_unstable_by(|a, b| b.cmp(a));
-        ids.dedup();
-        ids.into_iter().find(|&id| id != exclude_id)
-    }
-
-    async fn discover_cluster(&self) {
-        let discovery_msg = Message::Discovery { sender_id: self.id, timestamp: now_ts() };
-        for (node_id, addr) in &self.all_nodes {
-            if *node_id != self.id {
-                self.send_message(addr, &discovery_msg).await;
-            }
-        }
-        sleep(Duration::from_secs(2)).await;
-
-        if self.current_leader.read().await.is_none() {
-            self.start_election().await;
-        }
-    }
-
-    async fn start_election(&self) {
-        {
-            let mut in_prog = self.election_in_progress.write().await;
-            if *in_prog { return; }
-            *in_prog = true;
-        }
-
-        // Successor hint path
-        if let Some(succ) = *self.successor_hint.read().await {
-            if succ == self.id {
-                self.become_leader().await;
-                *self.election_in_progress.write().await = false;
-                return;
-            } else if succ > self.id {
-                // defer to higher successor
-                if let Some(addr) = self.all_nodes.get(&succ) {
-                    let election_msg = Message::Election { sender_id: self.id, timestamp: now_ts() };
-                    self.send_message(addr, &election_msg).await;
-                }
-                sleep(Duration::from_millis(800)).await;
-                if *self.state.read().await == NodeState::Leader {
-                    *self.election_in_progress.write().await = false;
-                    return;
-                }
-            }
-        }
-
-        // Bully
-        let election_msg = Message::Election { sender_id: self.id, timestamp: now_ts() };
-        let higher: Vec<_> = self.all_nodes.iter().filter(|(id, _)| **id > self.id).collect();
-
-        if higher.is_empty() {
-            self.become_leader().await;
-            *self.election_in_progress.write().await = false;
-            return;
-        }
-
-        for (_, addr) in &higher { self.send_message(addr, &election_msg).await; }
-        sleep(Duration::from_millis(1500)).await;
-
-        if *self.state.read().await != NodeState::Leader {
-            self.become_leader().await;
-        }
-
-        *self.election_in_progress.write().await = false;
-    }
-
-    async fn become_leader(&self) {
-        *self.state.write().await = NodeState::Leader;
-        *self.current_leader.write().await = Some(self.id);
-        *self.last_heartbeat.write().await = SystemTime::now();
-        *self.successor_hint.write().await = None;
-        self.active_nodes.write().await.clear();
-
-        // Announce to peers
-        let msg = Message::Coordinator { leader_id: self.id, timestamp: now_ts() };
-        for (node_id, addr) in &self.all_nodes {
-            if *node_id != self.id { self.send_message(addr, &msg).await; }
-        }
-
-        // Integration: update shared & notify
-        {
-            let mut s = self.shared.write().await;
-            s.leader_id = self.id;
-            s.is_leader = true;
-        }
-        let _ = self.leader_tx.send(self.id);
-        info!("Election: Node {} became leader", self.id);
-    }
-
-    async fn send_heartbeats(&self) {
-        let mut tick = interval(Duration::from_secs(2));
-        loop {
-            tick.tick().await;
-            if *self.state.read().await == NodeState::Leader {
-                // prune stale peers
-                {
-                    let mut active = self.active_nodes.write().await;
-                    let now = SystemTime::now();
-                    active.retain(|_peer_id, last_seen| {
-                        now.duration_since(*last_seen).unwrap_or(Duration::ZERO) < Duration::from_secs(PEER_EXPIRY_SECS)
-                    });
-                }
-                // compute successor
-                let active_nodes = self.active_nodes.read().await;
-                let exclude = self.current_leader.read().await.unwrap_or(self.id);
-                let successor_id = self.calculate_successor(&active_nodes, exclude);
-                drop(active_nodes);
-
-                let heartbeat = Message::Heartbeat {
-                    leader_id: self.id,
-                    successor_id,
-                    timestamp: now_ts(),
-                };
-                for (node_id, addr) in &self.all_nodes {
-                    if *node_id != self.id {
-                        self.send_message(addr, &heartbeat).await;
-                    }
-                }
-            }
-        }
-    }
-
-    async fn monitor_leader(&self) {
-        let mut tick = interval(Duration::from_secs(1));
-        loop {
-            tick.tick().await;
-            if *self.state.read().await != NodeState::Leader {
-                let elapsed = SystemTime::now()
-                    .duration_since(*self.last_heartbeat.read().await)
-                    .unwrap_or(Duration::ZERO);
-                if elapsed > Duration::from_secs(LEADER_TIMEOUT_SECS) {
-                    *self.current_leader.write().await = None;
-                    self.start_election().await;
-                }
-            }
-        }
-    }
-
-    async fn listen(&self) {
-        let mut buf = [0u8; 4096];
-        loop {
-            match self.socket.recv_from(&mut buf).await {
-                Ok((len, addr)) => {
-                    if let Ok(msg) = serde_json::from_slice::<Message>(&buf[..len]) {
-                        self.handle_message(msg, addr).await;
-                    }
-                }
-                Err(e) => { warn!("Election recv error: {e}"); }
-            }
-        }
-    }
-
-    async fn handle_message(&self, message: Message, _addr: SocketAddr) {
-        match message {
-            Message::Discovery { sender_id, .. } => {
-                self.active_nodes.write().await.insert(sender_id, SystemTime::now());
-                if *self.state.read().await == NodeState::Leader {
-                    if let Some(sender_addr) = self.all_nodes.get(&sender_id) {
-                        let response = Message::LeaderAnnounce { leader_id: self.id, timestamp: now_ts() };
-                        self.send_message(sender_addr, &response).await;
-                    }
-                }
-            }
-            Message::LeaderAnnounce { leader_id, .. } => {
-                let mut st = self.state.write().await;
-                *st = NodeState::Follower;
-                *self.current_leader.write().await = Some(leader_id);
-                *self.last_heartbeat.write().await = SystemTime::now();
-
-                // Integration: update shared & notify
-                {
-                    let mut s = self.shared.write().await;
-                    s.leader_id = leader_id;
-                    s.is_leader = s.node_id == leader_id;
-                }
-                let _ = self.leader_tx.send(leader_id);
-            }
-            Message::Election { sender_id, .. } => {
-                self.active_nodes.write().await.insert(sender_id, SystemTime::now());
-                if sender_id < self.id {
-                    if let Some(sender_addr) = self.all_nodes.get(&sender_id) {
-                        let ok = Message::ElectionOk { sender_id: self.id, timestamp: now_ts() };
-                        self.send_message(sender_addr, &ok).await;
-                    }
-                    if !*self.election_in_progress.read().await {
-                        self.start_election().await;
-                    }
-                }
-            }
-            Message::ElectionOk { .. } => {
-                *self.state.write().await = NodeState::Follower;
-            }
-            Message::Coordinator { leader_id, .. } => {
-                *self.current_leader.write().await = Some(leader_id);
-                *self.state.write().await = NodeState::Follower;
-                *self.last_heartbeat.write().await = SystemTime::now();
-
-                // Integration: update shared & notify
-                {
-                    let mut s = self.shared.write().await;
-                    s.leader_id = leader_id;
-                    s.is_leader = s.node_id == leader_id;
-                }
-                let _ = self.leader_tx.send(leader_id);
-            }
-            Message::Heartbeat { leader_id, successor_id, .. } => {
-                if *self.current_leader.read().await == Some(leader_id) || *self.state.read().await != NodeState::Leader {
-                    *self.current_leader.write().await = Some(leader_id);
-                    *self.last_heartbeat.write().await = SystemTime::now();
-                    *self.successor_hint.write().await = successor_id;
-
-                    // ack
-                    if let Some(leader_addr) = self.all_nodes.get(&leader_id) {
-                        let ack = Message::HeartbeatAck { sender_id: self.id, timestamp: now_ts() };
-                        self.send_message(leader_addr, &ack).await;
-                    }
-                }
-            }
-            Message::HeartbeatAck { sender_id, .. } => {
-                if *self.state.read().await == NodeState::Leader {
-                    self.active_nodes.write().await.insert(sender_id, SystemTime::now());
-                }
-            }
-        }
-    }
-
-    async fn send_message(&self, addr: &SocketAddr, message: &Message) {
-        if let Ok(data) = serde_json::to_vec(message) {
-            let _ = self.socket.send_to(&data, addr).await;
-        }
-    }
-
-    async fn report_status(&self) {
-        let mut every = interval(Duration::from_secs(5));
-        loop {
-            every.tick().await;
-            let state = self.state.read().await.clone();
-            let leader = *self.current_leader.read().await;
-            let elapsed = SystemTime::now()
-                .duration_since(*self.last_heartbeat.read().await)
-                .unwrap_or(Duration::ZERO)
-                .as_secs_f64();
-            if state == NodeState::Leader {
-                let active_nodes = self.active_nodes.read().await;
-                let computed_succ = self.calculate_successor(&active_nodes, self.id);
-                let active_count = active_nodes.len() + 1;
-                let live: Vec<u32> = active_nodes.keys().copied().collect();
-                drop(active_nodes);
-                info!("Node {}: Leader, leader={leader:?}, successor={computed_succ:?}, active={}, live={:?}, Δhb={:.1}s",
-                      self.id, active_count, live, elapsed);
-            } else {
-                let successor_hint = *self.successor_hint.read().await;
-                info!("Node {}: Follower, leader={leader:?}, successor_hint={successor_hint:?}, Δhb={:.1}s",
-                      self.id, elapsed);
-            }
-        }
-    }
+enum NodeState {
+    Follower,
+    Candidate,
+    Leader,
 }
 
 #[inline]
 fn now_ts() -> u64 {
-    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
-// === Public API used by main.rs ===
+pub async fn run_election_loop(
+    shared: SharedState,
+    cfg: Config,
+    leader_tx: watch::Sender<u32>,
+) {
+    let node_id = cfg.node_id;
+    let my_addr: SocketAddr = cfg.election_bind_addr();
+    let sock = Arc::new(
+        UdpSocket::bind(my_addr)
+            .await
+            .expect("bind election socket"),
+    );
+    info!(%my_addr, node=%node_id, "Election socket bound");
 
-pub async fn run_election_loop(state: SharedState, cfg: Config, leader_tx: watch::Sender<u32>) {
-    let node = Arc::new(Node::new(&cfg, leader_tx, state).await.expect("election init"));
-    node.clone().start().await;
-    future::pending::<()>().await;
+    // node_id -> election socket addr (derived from +100 scheme in Config)
+    let peers: Arc<HashMap<u32, SocketAddr>> = Arc::new(
+        Config::election_peer_addrs()
+            .into_iter()
+            .enumerate()
+            .map(|(i, a)| ((i as u32) + 1, a))
+            .collect(),
+    );
 
+    // Local election state
+    let state = Arc::new(RwLock::new(NodeState::Follower));
+    let current_leader = Arc::new(RwLock::new(None::<u32>));
+    let last_heartbeat = Arc::new(RwLock::new(SystemTime::now()));
+    let election_in_progress = Arc::new(RwLock::new(false));
+    let active_nodes = Arc::new(RwLock::new(HashMap::<u32, SystemTime>::new()));
+    let successor_hint = Arc::new(RwLock::new(None::<u32>));
+
+    // ===== Listener =====
+    {
+        let sock_c = Arc::clone(&sock);
+        let peers_c = Arc::clone(&peers);
+        let state_c = Arc::clone(&state);
+        let current_leader_c = Arc::clone(&current_leader);
+        let last_heartbeat_c = Arc::clone(&last_heartbeat);
+        let election_in_progress_c = Arc::clone(&election_in_progress);
+        let active_nodes_c = Arc::clone(&active_nodes);
+        let successor_hint_c = Arc::clone(&successor_hint);
+        let shared_c = Arc::clone(&shared);
+        let leader_tx_c = leader_tx.clone();
+        let node_id_c = node_id;
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 4096];
+            loop {
+                if shared_c.read().await.ignoring {
+                    sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                match sock_c.recv_from(&mut buf).await {
+                    Ok((len, from)) => {
+                        if shared_c.read().await.ignoring {
+                            continue;
+                        }
+                        if let Ok(msg) = serde_json::from_slice::<Message>(&buf[..len]) {
+                            match msg {
+                                Message::Discovery { sender_id, .. } => {
+                                    active_nodes_c
+                                        .write()
+                                        .await
+                                        .insert(sender_id, SystemTime::now());
+                                    debug!(node=%node_id_c, from=%sender_id, "Discovery");
+
+                                    if *state_c.read().await == NodeState::Leader {
+                                        if let Some(addr) = peers_c.get(&sender_id) {
+                                            if shared_c.read().await.ignoring {
+                                                continue;
+                                            }
+                                            let m = Message::LeaderAnnounce {
+                                                leader_id: current_leader_c.read().await.unwrap_or(0),
+                                                timestamp: now_ts(),
+                                            };
+                                            if let Ok(data) = serde_json::to_vec(&m) {
+                                                let _ = sock_c.send_to(&data, addr).await;
+                                            }
+                                        }
+                                    }
+                                }
+                                Message::LeaderAnnounce { leader_id, .. } => {
+                                    *current_leader_c.write().await = Some(leader_id);
+                                    *state_c.write().await = NodeState::Follower;
+                                    *last_heartbeat_c.write().await = SystemTime::now();
+                                    info!(node=%node_id_c, leader=%leader_id, "Leader announced; following");
+                                }
+                                Message::Election { sender_id, .. } => {
+                                    active_nodes_c
+                                        .write()
+                                        .await
+                                        .insert(sender_id, SystemTime::now());
+                                    info!(node=%node_id_c, from=%sender_id, "Election received");
+                                    if sender_id < node_id_c {
+                                        if let Some(addr) = peers_c.get(&sender_id) {
+                                            if !shared_c.read().await.ignoring {
+                                                let ok = Message::ElectionOk {
+                                                    sender_id: node_id_c,
+                                                    timestamp: now_ts(),
+                                                };
+                                                if let Ok(data) = serde_json::to_vec(&ok) {
+                                                    let _ = sock_c.send_to(&data, addr).await;
+                                                }
+                                            }
+                                        }
+                                        if !*election_in_progress_c.read().await {
+                                            start_election(
+                                                &sock_c,
+                                                node_id_c,
+                                                &peers_c,
+                                                &state_c,
+                                                &current_leader_c,
+                                                &election_in_progress_c,
+                                                &shared_c,
+                                                &leader_tx_c,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                Message::ElectionOk { sender_id, .. } => {
+                                    info!(node=%node_id_c, higher=%sender_id, "ElectionOk (higher node alive)");
+                                }
+                                Message::Coordinator { leader_id, .. } => {
+                                    *current_leader_c.write().await = Some(leader_id);
+                                    *state_c.write().await = NodeState::Follower;
+                                    *last_heartbeat_c.write().await = SystemTime::now();
+                                    *election_in_progress_c.write().await = false;
+                                    info!(node=%node_id_c, new_leader=%leader_id, "Coordinator received; following");
+                                }
+                                Message::Heartbeat { leader_id, successor_id, .. } => {
+                                    *successor_hint_c.write().await = successor_id;
+                                    if *current_leader_c.read().await == Some(leader_id) {
+                                        *last_heartbeat_c.write().await = SystemTime::now();
+                                    } else {
+                                        *current_leader_c.write().await = Some(leader_id);
+                                        *last_heartbeat_c.write().await = SystemTime::now();
+                                        *state_c.write().await = if node_id_c == leader_id {
+                                            NodeState::Leader
+                                        } else {
+                                            NodeState::Follower
+                                        };
+                                    }
+                                    active_nodes_c
+                                        .write()
+                                        .await
+                                        .insert(leader_id, SystemTime::now());
+                                    debug!(node=%node_id_c, from_leader=%leader_id, succ=?successor_id, "Heartbeat");
+                                }
+                                Message::HeartbeatAck { .. } => {}
+                            }
+                        } else {
+                            warn!(node=%node_id_c, from=%from, "Election: bad packet");
+                        }
+                    }
+                    Err(e) => {
+                        warn!(node=%node_id_c, error=?e, "Election recv_from error");
+                    }
+                }
+            }
+        });
+    }
+
+    // ===== Discovery (startup + periodic) =====
+    {
+        let sock_c = Arc::clone(&sock);
+        let peers_c = Arc::clone(&peers);
+        let state_c = Arc::clone(&state);
+        let current_leader_c = Arc::clone(&current_leader);
+        let election_in_progress_c = Arc::clone(&election_in_progress);
+        let shared_c = Arc::clone(&shared);
+        let leader_tx_c = leader_tx.clone();
+        let node_id_c = node_id;
+
+        tokio::spawn(async move {
+            // initial discovery sequence (first join)
+            sleep(Duration::from_millis(300)).await;
+            info!(node=%node_id_c, "Sending initial discovery burst");
+            send_discovery(&sock_c, node_id_c, &peers_c, &shared_c).await;
+
+            sleep(Duration::from_secs(2)).await;
+            if !shared_c.read().await.ignoring
+                && current_leader_c.read().await.is_none()
+                && !*election_in_progress_c.read().await
+            {
+                warn!(node=%node_id_c, "No leader after startup delay; starting election");
+                start_election(
+                    &sock_c,
+                    node_id_c,
+                    &peers_c,
+                    &state_c,
+                    &current_leader_c,
+                    &election_in_progress_c,
+                    &shared_c,
+                    &leader_tx_c,
+                )
+                .await;
+            }
+
+            // periodic discovery pings
+            loop {
+                sleep(Duration::from_secs(5)).await;
+                if !shared_c.read().await.ignoring {
+                    debug!(node=%node_id_c, "Periodic discovery");
+                    send_discovery(&sock_c, node_id_c, &peers_c, &shared_c).await;
+                }
+            }
+        });
+    }
+
+    // ===== Heartbeats (leaders only) =====
+    {
+        let sock_c = Arc::clone(&sock);
+        let state_c = Arc::clone(&state);
+        let shared_c = Arc::clone(&shared);
+        let active_nodes_c = Arc::clone(&active_nodes);
+        let current_leader_c = Arc::clone(&current_leader);
+        let node_id_c = node_id;
+
+        tokio::spawn(async move {
+            let mut tick = interval(Duration::from_secs(2));
+            loop {
+                tick.tick().await;
+                if shared_c.read().await.ignoring {
+                    continue;
+                }
+                if *state_c.read().await == NodeState::Leader {
+                    // prune stale peers
+                    {
+                        let mut act = active_nodes_c.write().await;
+                        let now = SystemTime::now();
+                        act.retain(|peer_id, last| {
+                            if *peer_id == node_id_c {
+                                return true;
+                            }
+                            now.duration_since(*last)
+                                .unwrap_or(Duration::from_secs(0))
+                                < Duration::from_secs(PEER_EXPIRY_SECS)
+                        });
+                    }
+                    let succ = {
+                        let act = active_nodes_c.read().await;
+                        calculate_successor(node_id_c, &act)
+                    };
+
+                    let hb = Message::Heartbeat {
+                        leader_id: node_id_c,
+                        successor_id: succ,
+                        timestamp: now_ts(),
+                    };
+                    if let Ok(data) = serde_json::to_vec(&hb) {
+                        for (id, addr) in Config::election_peer_addrs()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, a)| ((i as u32) + 1, a))
+                        {
+                            if id != node_id_c && !shared_c.read().await.ignoring {
+                                let _ = sock_c.send_to(&data, addr).await;
+                            }
+                        }
+                        debug!(leader=%node_id_c, succ=?succ, "Heartbeat broadcast");
+                    }
+
+                    *current_leader_c.write().await = Some(node_id_c);
+                }
+            }
+        });
+    }
+
+    // ===== Monitor (1s) & Status (5s) with REVIVAL REJOIN =====
+    {
+        // monitor loop
+        {
+            let sock_c = Arc::clone(&sock);
+            let peers_c = Arc::clone(&peers);
+            let state_c = Arc::clone(&state);
+            let current_leader_c = Arc::clone(&current_leader);
+            let election_in_progress_c = Arc::clone(&election_in_progress);
+            let last_heartbeat_c = Arc::clone(&last_heartbeat);
+            let active_nodes_c = Arc::clone(&active_nodes);
+            let shared_c = Arc::clone(&shared);
+            let leader_tx_c = leader_tx.clone();
+            let node_id_c = node_id;
+
+            tokio::spawn(async move {
+                let mut tick = interval(Duration::from_secs(1));
+                loop {
+                    tick.tick().await;
+
+                    // publish live set (include self if up)
+                    {
+                        let now = SystemTime::now();
+                        let mut live: Vec<u32> = Vec::new();
+                        if !shared_c.read().await.ignoring {
+                            live.push(node_id_c);
+                        }
+                        for (peer_id, last) in active_nodes_c.read().await.iter() {
+                            if *peer_id == node_id_c {
+                                continue;
+                            }
+                            if now
+                                .duration_since(*last)
+                                .unwrap_or_default()
+                                < Duration::from_secs(PEER_EXPIRY_SECS)
+                            {
+                                live.push(*peer_id);
+                            }
+                        }
+                        let mut s = shared_c.write().await;
+                        s.live_peers = live;
+                    }
+
+                    // follower timeout → election
+                    if *state_c.read().await != NodeState::Leader && !shared_c.read().await.ignoring {
+                        let elapsed = SystemTime::now()
+                            .duration_since(*last_heartbeat_c.read().await)
+                            .unwrap_or(Duration::ZERO);
+                        if elapsed > Duration::from_secs(LEADER_TIMEOUT_SECS) {
+                            warn!(
+                                node=%node_id_c,
+                                "Leader heartbeat timeout (> {}s); triggering election",
+                                LEADER_TIMEOUT_SECS
+                            );
+                            if !*election_in_progress_c.read().await {
+                                start_election(
+                                    &sock_c,
+                                    node_id_c,
+                                    &peers_c,
+                                    &state_c,
+                                    &current_leader_c,
+                                    &election_in_progress_c,
+                                    &shared_c,
+                                    &leader_tx_c,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // status reporter (5s) + **REVIVAL REJOIN** logic
+        {
+            let sock_c = Arc::clone(&sock);
+            let peers_c = Arc::clone(&peers);
+            let state_c = Arc::clone(&state);
+            let current_leader_c = Arc::clone(&current_leader);
+            let last_heartbeat_c = Arc::clone(&last_heartbeat);
+            let active_nodes_c = Arc::clone(&active_nodes);
+            let successor_hint_c = Arc::clone(&successor_hint);
+            let election_in_progress_c = Arc::clone(&election_in_progress);
+            let shared_c = Arc::clone(&shared);
+            let leader_tx_c = leader_tx.clone();
+            let node_id_c = node_id;
+
+            tokio::spawn(async move {
+                let mut every = interval(Duration::from_secs(5));
+                let mut was_ignoring = false;
+
+                loop {
+                    every.tick().await;
+
+                    // suppress logs while failing
+                    if shared_c.read().await.ignoring {
+                        was_ignoring = true;
+                        continue;
+                    }
+
+                    // ==== REVIVAL → restart as first join ====
+                    if was_ignoring {
+                        // 1) reset local election state
+                        *state_c.write().await = NodeState::Follower;
+                        *current_leader_c.write().await = None;
+                        active_nodes_c.write().await.clear();
+                        *successor_hint_c.write().await = None;
+                        *last_heartbeat_c.write().await = SystemTime::now();
+                        was_ignoring = false;
+
+                        info!(node=%node_id_c, "Revived: restarting join sequence");
+                        // 2) discovery burst
+                        send_discovery(&sock_c, node_id_c, &peers_c, &shared_c).await;
+
+                        // 3) wait 2s; if still no leader → start election
+                        sleep(Duration::from_secs(2)).await;
+                        if !shared_c.read().await.ignoring
+                            && current_leader_c.read().await.is_none()
+                            && !*election_in_progress_c.read().await
+                        {
+                            warn!(node=%node_id_c, "Post-revival: no leader; starting election");
+                            start_election(
+                                &sock_c,
+                                node_id_c,
+                                &peers_c,
+                                &state_c,
+                                &current_leader_c,
+                                &election_in_progress_c,
+                                &shared_c,
+                                &leader_tx_c,
+                            )
+                            .await;
+                        }
+                        // continue to next tick to print status after the above steps
+                        continue;
+                    }
+
+                    // ==== Normal status printing (when up) ====
+                    let elapsed = SystemTime::now()
+                        .duration_since(*last_heartbeat_c.read().await)
+                        .unwrap_or(Duration::ZERO)
+                        .as_secs_f64();
+
+                    let st = state_c.read().await.clone();
+                    let leader = *current_leader_c.read().await;
+
+                    if st == NodeState::Leader {
+                        let act = active_nodes_c.read().await;
+                        let computed_succ = calculate_successor(node_id_c, &act);
+                        let active_count = act.len() + 1; // include self
+                        let live: Vec<u32> = act.keys().copied().collect(); // peers only
+                        drop(act);
+                        info!(
+                            "Node {}: Leader, leader={leader:?}, successor={computed_succ:?}, active={}, followers={:?}, Δhb={:.1}s",
+                            node_id_c, active_count, live, elapsed
+                        );
+                    } else {
+                        let hint = *successor_hint_c.read().await;
+                        info!(
+                            "Node {}: Follower, leader={leader:?}, successor_hint={hint:?}, Δhb={:.1}s",
+                            node_id_c, elapsed
+                        );
+                    }
+                }
+            });
+        }
+    }
 }
 
-pub async fn handle_leader_changes(_state: SharedState, mut _rx: watch::Receiver<u32>) {
-    // The election module already writes SharedState + broadcasts.
-    // You can add extra hooks here if you need to react elsewhere.
-    while _rx.changed().await.is_ok() {}
+fn calculate_successor(
+    exclude_id: u32,
+    active_nodes: &HashMap<u32, SystemTime>,
+) -> Option<u32> {
+    let mut ids: Vec<u32> = active_nodes.keys().copied().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.into_iter().rev().find(|&id| id != exclude_id)
 }
 
+async fn send_discovery(
+    sock: &UdpSocket,
+    my_id: u32,
+    peers: &Arc<HashMap<u32, SocketAddr>>,
+    shared: &SharedState,
+) {
+    if shared.read().await.ignoring {
+        return;
+    }
+    let msg = Message::Discovery {
+        sender_id: my_id,
+        timestamp: now_ts(),
+    };
+    if let Ok(data) = serde_json::to_vec(&msg) {
+        for (id, addr) in peers.iter() {
+            if *id != my_id && !shared.read().await.ignoring {
+                let _ = sock.send_to(&data, addr).await;
+            }
+        }
+    }
+    debug!(node=%my_id, "Discovery broadcast sent");
+}
+
+async fn start_election(
+    sock: &UdpSocket,
+    my_id: u32,
+    peers: &Arc<HashMap<u32, SocketAddr>>,
+    state: &Arc<RwLock<NodeState>>,
+    current_leader: &Arc<RwLock<Option<u32>>>,
+    election_in_progress: &Arc<RwLock<bool>>,
+    shared: &SharedState,
+    leader_tx: &watch::Sender<u32>,
+) {
+    if shared.read().await.ignoring {
+        return;
+    }
+    *election_in_progress.write().await = true;
+    *state.write().await = NodeState::Candidate;
+
+    info!(node=%my_id, "Starting election (bully)");
+
+    // Bully: ping higher nodes
+    let higher: Vec<_> = peers.keys().filter(|&&k| k > my_id).cloned().collect();
+    if higher.is_empty() {
+        become_leader(sock, my_id, peers, state, current_leader, shared, leader_tx).await;
+        *election_in_progress.write().await = false;
+        return;
+    }
+
+    let msg = Message::Election {
+        sender_id: my_id,
+        timestamp: now_ts(),
+    };
+    if let Ok(data) = serde_json::to_vec(&msg) {
+        for id in &higher {
+            if let Some(addr) = peers.get(id) {
+                if !shared.read().await.ignoring {
+                    let _ = sock.send_to(&data, addr).await;
+                }
+            }
+        }
+        debug!(node=%my_id, higher=?higher, "Election ping to higher nodes");
+    }
+
+    // Wait a bit; if nobody responds and no Coordinator arrives → assume leadership
+    sleep(Duration::from_millis(1200)).await;
+
+    if *state.read().await == NodeState::Candidate && !shared.read().await.ignoring {
+        info!(node=%my_id, "No higher node claimed leadership; becoming leader");
+        become_leader(sock, my_id, peers, state, current_leader, shared, leader_tx).await;
+    }
+
+    *election_in_progress.write().await = false;
+}
+
+async fn become_leader(
+    sock: &UdpSocket,
+    my_id: u32,
+    peers: &Arc<HashMap<u32, SocketAddr>>,
+    state: &Arc<RwLock<NodeState>>,
+    current_leader: &Arc<RwLock<Option<u32>>>,
+    shared: &SharedState,
+    leader_tx: &watch::Sender<u32>,
+) {
+    if shared.read().await.ignoring {
+        return;
+    }
+    *state.write().await = NodeState::Leader;
+    *current_leader.write().await = Some(my_id);
+    {
+        let mut s = shared.write().await;
+        s.leader_id = my_id;
+        s.is_leader = true;
+    }
+    info!(leader=%my_id, "Node became leader");
+    let _ = leader_tx.send(my_id);
+
+    // Announce Coordinator
+    let msg = Message::Coordinator {
+        leader_id: my_id,
+        timestamp: now_ts(),
+    };
+    if let Ok(data) = serde_json::to_vec(&msg) {
+        for (id, addr) in peers.iter() {
+            if *id != my_id && !shared.read().await.ignoring {
+                let _ = sock.send_to(&data, addr).await;
+            }
+        }
+        debug!(leader=%my_id, "Coordinator broadcast");
+    }
+}
+
+pub async fn handle_leader_changes(shared: SharedState, mut rx: watch::Receiver<u32>) {
+    while rx.changed().await.is_ok() {
+        let new_leader = *rx.borrow();
+        let mut s = shared.write().await;
+        s.leader_id = new_leader;
+        s.is_leader = s.node_id == new_leader;
+        info!(leader=%new_leader, is_leader=%s.is_leader, node=%s.node_id, "leader changed");
+    }
+}
