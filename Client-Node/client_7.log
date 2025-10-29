@@ -1,0 +1,10 @@
+Starting consistent stream mode:
+  Throttle: 500 µs per packet
+  Total requests: 10000
+  Concurrency: 64
+  Chunk size: 1200 bytes
+  Chunks per request: 827
+  Estimated duration: ~64.7s
+
+Done. Sent 10000 requests (header + 827 chunks) to 1 servers in 85.40s.
+Datagrams total ≈ 8280000. Throughput ≈ 117 req/s.
