@@ -1,268 +1,173 @@
-use std::env;
-use std::fs;
-use std::io;
-use std::net::UdpSocket;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::{fs, net::{SocketAddr, UdpSocket}, process::Command, time::Duration};
 
-#[derive(Clone)]
-struct Config {
-    servers: Vec<String>,
-    image_path: PathBuf,
-    total: u32,
-    concurrency: usize,
-    chunk_size: usize,
-    request_type: String,
-    mime: String,
-    jitter_us: u64,
-    throttle_us: u64,
+#[derive(Parser, Debug, Clone)]
+#[command(name = "client")]
+struct Cli {
+    /// Comma-separated peers (ip:port) — must match servers
+    #[arg(long, default_value = "10.40.61.79:8080,10.40.58.169:8081,10.40.50.93:8083")]
+    peers: String,
+
+    /// Number of OS processes to spawn
+    #[arg(long, default_value_t = 1)]
+    processes: usize,
+
+    /// Requests per worker process (synchronous)
+    #[arg(long, default_value_t = 3)]
+    requests_per_process: usize,
+
+    /// Path to image (same image across all processes)
+    #[arg(long)]
+    image: String,
+
+    /// Owner field for stego meta
+    #[arg(long, default_value = "owner")]
+    owner: String,
+
+    /// Allow list like "alice:3,bob:2"
+    #[arg(long, default_value = "alice:3,bob:2")]
+    allow: String,
+
+    /// Sender ID (client logical id)
+    #[arg(long, default_value_t = 1001)]
+    sender_id: u32,
+
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
 }
 
-fn usage_and_exit() -> ! {
-    eprintln!(
-        "Usage:
-  client --servers IP:PORT[,IP:PORT...] --image PATH
-         [--total N] [--concurrency N] [--chunk-size BYTES]
-         [--request-type STR] [--mime STR] [--jitter-us N] [--throttle-us N]
-
-Example:
-  client --servers 10.0.0.10:8080,10.0.0.11:8080 \\
-         --image ./fhd.jpg --total 10000 --concurrency 64 \\
-         --chunk-size 1200 --request-type Stress --mime image/jpeg \\
-         --throttle-us 100"
-    );
-    std::process::exit(2);
+#[derive(Subcommand, Debug, Clone)]
+enum Cmd {
+    Worker {
+        #[arg(long)] peers: String,
+        #[arg(long)] requests: usize,
+        #[arg(long)] image: String,
+        #[arg(long)] owner: String,
+        #[arg(long)] allow: String,
+        #[arg(long)] sender_id: u32,
+        #[arg(long)] idx: usize,
+    }
 }
 
-fn get_flag(args: &[String], name: &str) -> Option<String> {
-    for i in 0..args.len() {
-        if args[i] == name {
-            if i + 1 < args.len() {
-                return Some(args[i + 1].clone());
-            } else {
-                return None;
+#[derive(serde::Serialize)]
+struct Meta { owner: String, allow: Vec<AllowEnt> }
+#[derive(serde::Serialize)]
+struct AllowEnt { user: String, remaining_views: u32 }
+
+fn parse_allow(s: &str) -> Vec<AllowEnt> {
+    s.split(',').filter_map(|x| {
+        let (u,v) = x.split_once(':')?;
+        Some(AllowEnt{ user: u.to_string(), remaining_views: v.parse().ok()? })
+    }).collect()
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    match &cli.cmd {
+        Some(Cmd::Worker{ peers, requests, image, owner, allow, sender_id, idx }) => {
+            worker(peers, *requests, image, owner, allow, *sender_id, *idx)
+        }
+        None => {
+            for i in 0..cli.processes {
+                let mut child = Command::new(std::env::current_exe()?)
+                    .args([
+                        "worker",
+                        "--peers", &cli.peers,
+                        "--requests", &cli.requests_per_process.to_string(),
+                        "--image", &cli.image,
+                        "--owner", &cli.owner,
+                        "--allow", &cli.allow,
+                        "--sender-id", &cli.sender_id.to_string(),
+                        "--idx", &i.to_string(),
+                    ])
+                    .spawn()?;
+                let _ = child.wait();
             }
-        } else if let Some(eq) = args[i].strip_prefix(&(name.to_string() + "=")) {
-            return Some(eq.to_string());
+            Ok(())
         }
     }
-    None
 }
 
-fn parse_args() -> io::Result<Config> {
-    let args: Vec<String> = env::args().collect();
+fn worker(peers: &str, requests: usize, image: &str, owner: &str, allow: &str, sender_id: u32, idx: usize) -> Result<()> {
+    let peers: Vec<SocketAddr> = peers.split(',').map(|s| s.parse().unwrap()).collect();
+    let img = fs::read(image)?;
+    let meta_json = serde_json::to_vec(&Meta { owner: owner.to_string(), allow: parse_allow(allow) })?;
 
-    if args.len() == 1 || args.iter().any(|a| a == "-h" || a == "--help") {
-        usage_and_exit();
-    }
+    let sock = UdpSocket::bind("0.0.0.0:0")?;
+    sock.set_read_timeout(Some(Duration::from_secs(5)))?;
 
-    let servers_str = get_flag(&args, "--servers").unwrap_or_else(|| {
-        eprintln!("Missing required --servers");
-        usage_and_exit();
-    });
-    let servers: Vec<String> = servers_str
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if servers.is_empty() {
-        eprintln!("--servers parsed to empty list");
-        std::process::exit(2);
-    }
+    for r in 0..requests {
+        let req_id = make_req_id(idx as u32, r as u32);
 
-    let image_str = get_flag(&args, "--image").unwrap_or_else(|| {
-        eprintln!("Missing required --image");
-        usage_and_exit();
-    });
+        let mut all = Vec::with_capacity(meta_json.len() + img.len());
+        all.extend_from_slice(&meta_json);
+        all.extend_from_slice(&img);
 
-    let total = get_flag(&args, "--total")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(10_000);
+        let chunk_payload = 1200 - (1 + 4 + 4);
+        let total_chunks = ((all.len() + chunk_payload - 1) / chunk_payload) as u32;
 
-    let concurrency = get_flag(&args, "--concurrency")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(64)
-        .max(1);
+        // REQ_BCAST header
+        let mut hdr = Vec::with_capacity(1+4+4+4+4+4);
+        hdr.push(0u8);
+        hdr.extend(req_id.to_le_bytes());
+        hdr.extend(sender_id.to_le_bytes());
+        hdr.extend(total_chunks.to_le_bytes());
+        hdr.extend((meta_json.len() as u32).to_le_bytes());
+        hdr.extend((img.len() as u32).to_le_bytes());
 
-    let chunk_size = get_flag(&args, "--chunk-size")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1200);
+        for p in &peers { let _ = sock.send_to(&hdr, p); }
 
-    let request_type = get_flag(&args, "--request-type").unwrap_or_else(|| "Stress".to_string());
+        // CHUNKs
+        for i in 0..total_chunks {
+            let start = (i as usize)*chunk_payload;
+            let end   = ((i as usize + 1)*chunk_payload).min(all.len());
+            let mut pkt = Vec::with_capacity(1+4+4 + (end-start));
+            pkt.push(1u8);
+            pkt.extend(req_id.to_le_bytes());
+            pkt.extend(i.to_le_bytes());
+            pkt.extend_from_slice(&all[start..end]);
+            for p in &peers { let _ = sock.send_to(&pkt, p); }
+        }
 
-    let mime = get_flag(&args, "--mime").unwrap_or_else(|| "image/jpeg".to_string());
-
-    let jitter_us = get_flag(&args, "--jitter-us")
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
-
-    let throttle_us = get_flag(&args, "--throttle-us")
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(500);
-
-    Ok(Config {
-        servers,
-        image_path: PathBuf::from(image_str),
-        total,
-        concurrency,
-        chunk_size,
-        request_type,
-        mime,
-        jitter_us,
-        throttle_us,
-    })
-}
-
-struct Lcg {
-    state: u64,
-}
-impl Lcg {
-    fn new(seed: u64) -> Self {
-        Self { state: seed | 1 }
-    }
-    fn next(&mut self) -> u64 {
-        self.state = self
-            .state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1);
-        self.state
-    }
-}
-
-fn now_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0))
-        .as_nanos()
-}
-
-fn main() -> io::Result<()> {
-    let cfg = parse_args()?;
-
-    let img = fs::read(&cfg.image_path)?;
-    if img.is_empty() {
-        eprintln!("Image file is empty: {:?}", cfg.image_path);
-        std::process::exit(2);
-    }
-
-    let chunk_size = cfg.chunk_size.clamp(512, 60_000);
-    let total_chunks = ((img.len() + chunk_size - 1) / chunk_size) as u32;
-
-    let img_arc: Arc<Vec<u8>> = Arc::new(img);
-    let servers_arc: Arc<Vec<String>> = Arc::new(cfg.servers.clone());
-    let req_type_arc: Arc<String> = Arc::new(cfg.request_type.clone());
-    let mime_arc: Arc<String> = Arc::new(cfg.mime.clone());
-    let total = cfg.total;
-    let concurrency = cfg.concurrency;
-    let jitter_us = cfg.jitter_us;
-    let throttle_us = cfg.throttle_us;
-
-    let sent_reqs = Arc::new(AtomicU64::new(0));
-    let next_id = Arc::new(AtomicU64::new(0));
-
-    let start = Instant::now();
-    let base_req_id = (now_nanos() & 0xFFFF_FFFF_FFFF_FFFF) as u64;
-
-    println!("Starting consistent stream mode:");
-    println!("  Throttle: {} µs per packet", throttle_us);
-    println!("  Total requests: {}", total);
-    println!("  Concurrency: {}", concurrency);
-    println!("  Chunk size: {} bytes", chunk_size);
-    println!("  Chunks per request: {}", total_chunks);
-    println!("  Estimated duration: ~{:.1}s\n", 
-        (total as f64 * (total_chunks as f64 + 1.0) * throttle_us as f64) / (1_000_000.0 * concurrency as f64));
-
-    thread::scope(|scope| {
-        for t in 0..concurrency {
-            let img = Arc::clone(&img_arc);
-            let servers = Arc::clone(&servers_arc);
-            let req_type = Arc::clone(&req_type_arc);
-            let mime = Arc::clone(&mime_arc);
-            let sent_reqs = Arc::clone(&sent_reqs);
-            let next_id = Arc::clone(&next_id);
-
-            scope.spawn(move || {
-                let sock = UdpSocket::bind("0.0.0.0:0").expect("bind UDP");
-                let mut rng = Lcg::new(base_req_id ^ (t as u64) ^ 0x9E37_79B9);
-
-                loop {
-                    let idx = next_id.fetch_add(1, Ordering::Relaxed);
-                    if idx as u32 >= total {
-                        break;
-                    }
-
-                    let req_id = base_req_id.wrapping_add(idx);
-
-                    let header = format!(
-                        "{{\"version\":1,\
-                          \"kind\":\"client_header\",\
-                          \"request_type\":\"{rt}\",\
-                          \"req_id\":{rid},\
-                          \"mime\":\"{mime}\",\
-                          \"image_len\":{len},\
-                          \"chunk_size\":{cs},\
-                          \"total_chunks\":{tc}}}",
-                        rt = *req_type,
-                        rid = req_id,
-                        mime = *mime,
-                        len = img.len(),
-                        cs = chunk_size,
-                        tc = total_chunks
-                    );
-                    let header_bytes = header.as_bytes();
-
-                    for target in servers.iter() {
-                        let _ = sock.send_to(header_bytes, target);
-                        thread::sleep(Duration::from_micros(throttle_us));
-
-                        let mut offset = 0usize;
-                        for seq in 0..total_chunks {
-                            let end = (offset + chunk_size).min(img.len());
-                            let payload = &img[offset..end];
-
-                            let mut frame = Vec::with_capacity(2 + 8 + 4 + 4 + payload.len());
-                            frame.extend_from_slice(&1u16.to_be_bytes());
-                            frame.extend_from_slice(&req_id.to_be_bytes());
-                            frame.extend_from_slice(&seq.to_be_bytes());
-                            frame.extend_from_slice(&total_chunks.to_be_bytes());
-                            frame.extend_from_slice(payload);
-
-                            let _ = sock.send_to(&frame, target);
-                            thread::sleep(Duration::from_micros(throttle_us));
-                            offset = end;
+        // Wait for RESP_META/RESP_CHUNKs
+        use std::collections::HashMap as Map;
+        let (mut expected_chunks, mut got_chunks, mut out_buf) = (0u32, 0u32, Map::<u32, Vec<u8>>::new());
+        loop {
+            let mut buf = [0u8; 2048];
+            match sock.recv_from(&mut buf) {
+                Ok((n, _from)) if n > 0 => {
+                    match buf[0] {
+                        6 => { // RESP_META
+                            let rid = u32::from_le_bytes(buf[1..5].try_into().unwrap());
+                            if rid != req_id { continue; }
+                            expected_chunks = u32::from_le_bytes(buf[5..9].try_into().unwrap());
                         }
-                    }
-
-                    sent_reqs.fetch_add(1, Ordering::Relaxed);
-
-                    if jitter_us > 0 {
-                        let j = (rng.next() % (jitter_us + 1)) as u64;
-                        thread::sleep(Duration::from_micros(j));
+                        7 => { // RESP_CHUNK
+                            let rid = u32::from_le_bytes(buf[1..5].try_into().unwrap());
+                            if rid != req_id { continue; }
+                            let seq = u32::from_le_bytes(buf[5..9].try_into().unwrap());
+                            out_buf.insert(seq, buf[9..n].to_vec());
+                            got_chunks += 1;
+                            if expected_chunks > 0 && got_chunks == expected_chunks {
+                                let mut all = Vec::new();
+                                for i in 0..expected_chunks {
+                                    if let Some(c) = out_buf.remove(&i) { all.extend_from_slice(&c); }
+                                }
+                                println!("[proc#{idx}] request {}/{} OK ({} bytes)", r+1, requests, all.len());
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
                 }
-            });
+                _ => {}
+            }
         }
-    });
-
-    let elapsed = start.elapsed();
-    let total_sent = sent_reqs.load(Ordering::Relaxed);
-    let servers_n = servers_arc.len();
-    let datagrams_per_request = 1u64 + total_chunks as u64;
-    let total_datagrams = total_sent * datagrams_per_request * servers_n as u64;
-
-    println!(
-        "Done. Sent {reqs} requests (header + {chunks} chunks) to {srv} servers in {dur:.2?}.
-Datagrams total ≈ {dgrams}. Throughput ≈ {rps:.0} req/s.",
-        reqs = total_sent,
-        chunks = total_chunks,
-        srv = servers_n,
-        dur = elapsed,
-        dgrams = total_datagrams,
-        rps = (total_sent as f64) / elapsed.as_secs_f64()
-    );
-
+    }
     Ok(())
+}
+
+fn make_req_id(proc_idx: u32, seq: u32) -> u32 {
+    (proc_idx << 16) | (seq & 0xFFFF)
 }
