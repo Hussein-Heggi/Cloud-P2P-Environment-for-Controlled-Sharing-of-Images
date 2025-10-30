@@ -1,0 +1,11 @@
+Missing required --servers
+Usage:
+  client --servers IP:PORT[,IP:PORT...] --image PATH
+         [--total N] [--concurrency N] [--chunk-size BYTES]
+         [--request-type STR] [--mime STR] [--jitter-us N] [--throttle-us N]
+
+Example:
+  client --servers 10.0.0.10:8080,10.0.0.11:8080 \
+         --image ./fhd.jpg --total 10000 --concurrency 64 \
+         --chunk-size 1200 --request-type Stress --mime image/jpeg \
+         --throttle-us 100

@@ -1,166 +1,220 @@
-//! UDP stego service with request/processing logs.
+//! UDP service (client port) — SELECT/ACCEPT + upload/echo pipeline
 //! Wire (LE):
 //!   REQ_META  (type=0): [u8][u32 req_id][u32 total_chunks][u32 img_bytes][u32 meta_bytes]
 //!   REQ_CHUNK (type=1): [u8][u32 req_id][u32 seq][bytes...]
 //!   RESP_META (type=2): [u8][u32 req_id][u32 total_chunks][u32 out_bytes]
 //!   RESP_CHUNK(type=3): [u8][u32 req_id][u32 seq][bytes...]
+//!   SELECT    (type=4): [u8][u32 req_id][u32 sender_id][u8 op_code][u32 image_len]
+//!   ACCEPT    (type=5): [u8][u32 req_id]
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::net::UdpSocket;
-use tracing::{info, warn, debug, error};
+use tracing::{debug, info};
 
-use crate::{state::SharedState, config::Config, stego_service};
+use crate::{
+    config::Config,
+    state::{ServerState, SharedState},
+};
+
+const REQ_META: u8 = 0;
+const REQ_CHUNK: u8 = 1;
+const RESP_META: u8 = 2;
+const RESP_CHUNK: u8 = 3;
+const SELECT: u8 = 4;
+const ACCEPT: u8 = 5;
 
 const MAX_DGRAM: usize = 1200;
-const HDR_META: usize  = 1 + 4 + 4 + 4 + 4;
+const HDR_META: usize = 1 + 4 + 4 + 4 + 4;
 const HDR_CHUNK: usize = 1 + 4 + 4;
 
-#[derive(Default)]
-struct Reassembly {
-    from: Option<SocketAddr>,
-    total_chunks: u32,
-    got: Vec<bool>,
-    buf: Vec<Vec<u8>>,
-    img_len: usize,
-    meta_len: usize,
+#[inline]
+fn now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+}
+
+fn is_executor(state: &ServerState, my_client_ip: IpAddr) -> bool {
+    if let (Some(exec_ip), Some(deadline)) = (&state.executor_ip, state.executor_lease_deadline_ms)
+    {
+        exec_ip == &my_client_ip && now_ms() <= deadline
+    } else {
+        false
+    }
 }
 
 pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<()> {
-    // Bind on the **service** port
-    let addr = cfg.udp_bind_addr();
-    let sock = UdpSocket::bind(addr).await?;
-    info!(%addr, "UDP listening (service)");
+    // Bind client-facing service socket (fixed port per node)
+    let bind_addr = cfg
+        .service_bind_addr()
+        .expect("udp_bind (service) not configured");
+    let sock = UdpSocket::bind(bind_addr).await?;
+    println!("Client port bound: {}", bind_addr);
+    info!(%bind_addr, "UDP listening (service)");
 
-    let mut reqs: HashMap<u32, Reassembly> = HashMap::new();
-    let mut buf = vec![0u8; 64 * 1024];
+    // Remember my client IP (for executor comparison)
+    let my_client_ip = bind_addr.ip();
 
+    // Per-request assembly (executor only)
+    #[derive(Default)]
+    struct ReqCtx {
+        expect_chunks: u32,
+        image_len: usize,
+        buffer: Vec<u8>,
+        received: u32,
+    }
+    let mut ctxs: HashMap<u32, ReqCtx> = HashMap::new();
+
+    let mut buf = [0u8; 64 * 1024];
     loop {
         let (n, peer) = sock.recv_from(&mut buf).await?;
-        // Simulated failure: act as if down (no logs, no traffic)
-        if state.read().await.ignoring { continue; }
-        if n == 0 { continue; }
+        if state.read().await.ignoring || n == 0 {
+            continue;
+        }
 
         match buf[0] {
-            // --------------------- REQ_META ---------------------
-            0 => {
-                if n < HDR_META { continue; }
-                let req_id      = u32::from_le_bytes(buf[1..5].try_into().unwrap());
-                let total_chunks= u32::from_le_bytes(buf[5..9].try_into().unwrap());
-                let img_bytes   = u32::from_le_bytes(buf[9..13].try_into().unwrap()) as usize;
-                let meta_bytes  = u32::from_le_bytes(buf[13..17].try_into().unwrap()) as usize;
+            // --------------------- SELECT ---------------------
+            x if x == SELECT => {
+                if n < 1 + 4 + 4 + 1 + 4 {
+                    continue;
+                }
+                let req_id = u32::from_le_bytes(buf[1..5].try_into().unwrap());
 
-                if !state.read().await.is_leader {
-                    // Not leader → send lightweight redirect & log once
-                    debug!(%peer, req_id, "Follower received REQ_META; sending REDIRECT");
-                    let mut out = Vec::with_capacity(1 + 4 + 4 + 4 + 8);
-                    out.push(2u8);
-                    out.extend(req_id.to_le_bytes());
-                    out.extend(0u32.to_le_bytes()); // total_chunks=0 => redirect marker
-                    out.extend(0u32.to_le_bytes());
-                    out.extend_from_slice(b"REDIRECT");
-                    let _ = sock.send_to(&out, peer).await;
+                let am_exec = {
+                    let s = state.read().await;
+                    is_executor(&*s, my_client_ip)
+                };
+                if am_exec {
+                    let mut pkt = [0u8; 1 + 4];
+                    pkt[0] = ACCEPT;
+                    pkt[1..5].copy_from_slice(&req_id.to_le_bytes());
+                    let _ = sock.send_to(&pkt, peer).await;
+                    println!("[EXECUTOR] ACCEPT sent to {} | req_id={}", peer, req_id);
+                    debug!(%peer, req_id, "ACCEPT sent (executor)");
+                } else {
+                    // Non-executors stay silent (no redirect).
+                }
+            }
+
+            // --------------------- REQ_META ---------------------
+            x if x == REQ_META => {
+                if n < HDR_META {
+                    continue;
+                }
+                let req_id = u32::from_le_bytes(buf[1..5].try_into().unwrap());
+                let total_chunks = u32::from_le_bytes(buf[5..9].try_into().unwrap());
+                let img_bytes = u32::from_le_bytes(buf[9..13].try_into().unwrap()) as usize;
+                let meta_bytes = u32::from_le_bytes(buf[13..17].try_into().unwrap()) as usize;
+
+                let am_exec = {
+                    let s = state.read().await;
+                    is_executor(&*s, my_client_ip)
+                };
+                if !am_exec {
+                    println!(
+                        "[NON-EXECUTOR] Ignoring REQ_META from {} | req_id={}",
+                        peer, req_id
+                    );
                     continue;
                 }
 
-                // Leader: create/replace reassembly state and LOG the request
-                let mut r = Reassembly::default();
-                r.from          = Some(peer);
-                r.total_chunks  = total_chunks;
-                r.got           = vec![false; total_chunks as usize];
-                r.buf           = vec![Vec::new(); total_chunks as usize];
-                r.img_len       = img_bytes;
-                r.meta_len      = meta_bytes;
+                let mut c = ReqCtx::default();
+                c.expect_chunks = total_chunks;
+                c.image_len = img_bytes;
+                c.buffer.clear();
+                c.buffer.reserve(img_bytes);
 
-                reqs.insert(req_id, r);
-
-                // 🔔 LOG: request accepted by leader
-                info!(
-                    %peer, req_id, total_chunks, img_bytes, meta_bytes,
-                    "REQ_META received (request accepted by leader)"
+                // meta_json is appended after the header; not needed for echo
+                ctxs.insert(req_id, c);
+                println!(
+                    "[EXECUTOR] REQ_META accepted from {} | req_id={} total_chunks={} image_len={} meta_len={}",
+                    peer, req_id, total_chunks, img_bytes, meta_bytes
                 );
+                debug!(%peer, req_id, total_chunks, img_bytes, meta_bytes, "REQ_META accepted (executor)");
             }
 
-            // --------------------- REQ_CHUNK --------------------
-            1 => {
-                if n < HDR_CHUNK { continue; }
+            // --------------------- REQ_CHUNK ---------------------
+            x if x == REQ_CHUNK => {
+                if n < HDR_CHUNK {
+                    continue;
+                }
                 let req_id = u32::from_le_bytes(buf[1..5].try_into().unwrap());
-                let seq    = u32::from_le_bytes(buf[5..9].try_into().unwrap()) as usize;
+                let seq = u32::from_le_bytes(buf[5..9].try_into().unwrap());
+                let payload = &buf[9..n];
 
-                if let Some(r) = reqs.get_mut(&req_id) {
-                    if seq < r.buf.len() {
-                        r.buf[seq].clear();
-                        r.buf[seq].extend_from_slice(&buf[9..n]);
-                        r.got[seq] = true;
-                    }
+                let am_exec = {
+                    let s = state.read().await;
+                    is_executor(&*s, my_client_ip)
+                };
+                if !am_exec {
+                    println!(
+                        "[NON-EXECUTOR] Ignoring REQ_CHUNK from {} | req_id={} seq={}",
+                        peer, req_id, seq
+                    );
+                    continue;
+                }
 
-                    // If all chunks arrived → assemble & process
-                    if r.got.iter().all(|&b| b) {
-                        let to = r.from.unwrap_or(peer);
+                if let Some(c) = ctxs.get_mut(&req_id) {
+                    c.buffer.extend_from_slice(payload);
+                    c.received += 1;
 
-                        // 🔔 LOG: all chunks received; start processing
-                        info!(
-                            %to, req_id, total_chunks = r.total_chunks,
-                            "All chunks received; starting stego processing"
-                        );
+                    if c.received == c.expect_chunks || c.buffer.len() >= c.image_len {
+                        // Simulate processing ~1s
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
 
-                        // Reassemble in-order: meta first, then image
-                        let mut all = Vec::with_capacity(r.meta_len + r.img_len);
-                        for chunk in &r.buf { all.extend_from_slice(chunk); }
-                        let meta_json = &all[..r.meta_len];
-                        let img_bytes = &all[r.meta_len..(r.meta_len + r.img_len)];
+                        // Echo back
+                        let out_len = c.image_len;
+                        let payload_cap = MAX_DGRAM - (1 + 4 + 4); // RESP_CHUNK header space
+                        let total_out_chunks =
+                            ((out_len + payload_cap - 1) / payload_cap) as u32;
 
-                        match stego_service::embed_meta_return_png(img_bytes, meta_json) {
-                            Ok(out_png) => {
-                                let out_chunks = ((out_png.len() + (MAX_DGRAM - (1+4+4)) - 1)
-                                    / (MAX_DGRAM - (1+4+4))) as u32;
+                        // RESP_META: [2][req_id][total_chunks][out_len]
+                        let mut hdr = [0u8; 1 + 4 + 4 + 4];
+                        hdr[0] = RESP_META;
+                        hdr[1..5].copy_from_slice(&req_id.to_le_bytes());
+                        hdr[5..9].copy_from_slice(&total_out_chunks.to_le_bytes());
+                        hdr[9..13].copy_from_slice(&(out_len as u32).to_le_bytes());
+                        let _ = sock.send_to(&hdr, peer).await;
 
-                                // 🔔 LOG: processing completed; sending response
-                                info!(
-                                    %to, req_id, out_bytes = out_png.len(), out_chunks,
-                                    "Processing completed; sending RESP_META and chunks"
-                                );
-
-                                // RESP_META
-                                let mut meta = Vec::with_capacity(1 + 4 + 4 + 4);
-                                meta.push(2u8);
-                                meta.extend(req_id.to_le_bytes());
-                                meta.extend(out_chunks.to_le_bytes());
-                                meta.extend((out_png.len() as u32).to_le_bytes());
-                                let _ = sock.send_to(&meta, to).await;
-
-                                // RESP_CHUNKs
-                                for (i, chunk) in out_png.chunks(MAX_DGRAM - (1+4+4)).enumerate() {
-                                    let mut pkt = Vec::with_capacity(1 + 4 + 4 + chunk.len());
-                                    pkt.push(3u8);
-                                    pkt.extend(req_id.to_le_bytes());
-                                    pkt.extend((i as u32).to_le_bytes());
-                                    pkt.extend_from_slice(chunk);
-                                    let _ = sock.send_to(&pkt, to).await;
-                                }
-                            }
-                            Err(e) => {
-                                error!(%to, req_id, error=?e, "Stego processing failed");
-                                // Minimal error meta (client may retry)
-                                let mut meta = Vec::with_capacity(1 + 4 + 4 + 4);
-                                meta.push(2u8);
-                                meta.extend(req_id.to_le_bytes());
-                                meta.extend(0u32.to_le_bytes());
-                                meta.extend(0u32.to_le_bytes());
-                                let _ = sock.send_to(&meta, to).await;
-                            }
+                        // RESP_CHUNK(s)
+                        let mut off = 0usize;
+                        let mut seq_out = 0u32;
+                        while off < out_len {
+                            let take = (out_len - off).min(payload_cap);
+                            let mut pkt = Vec::with_capacity(1 + 4 + 4 + take);
+                            pkt.push(RESP_CHUNK);
+                            pkt.extend(req_id.to_le_bytes());
+                            pkt.extend(seq_out.to_le_bytes());
+                            pkt.extend_from_slice(&c.buffer[off..off + take]);
+                            let _ = sock.send_to(&pkt, peer).await;
+                            off += take;
+                            seq_out += 1;
                         }
 
-                        // Done with this request
-                        reqs.remove(&req_id);
+                        println!(
+                            "[EXECUTOR] RESP echoed to {} | req_id={} out_len={} chunks={}",
+                            peer, req_id, out_len, total_out_chunks
+                        );
+                        debug!(%peer, req_id, out_len, chunks=%total_out_chunks, "RESP echoed (executor)");
+                        ctxs.remove(&req_id);
                     }
                 } else {
-                    // Late chunk with no REQ_META context
-                    debug!(%peer, req_id, seq, "Chunk without context; ignoring");
+                    println!(
+                        "[EXECUTOR] Ignoring REQ_CHUNK with no ctx | from {} req_id={} seq={}",
+                        peer, req_id, seq
+                    );
+                    debug!(%peer, req_id, seq, "REQ_CHUNK ignored (no REQ_META ctx)");
                 }
             }
 
             // --------------------- Unknown ----------------------
             other => {
+                println!("Unknown UDP packet type {} from {}", other, peer);
                 debug!(%peer, ty = other, "Unknown UDP packet type");
             }
         }

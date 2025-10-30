@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "server", about = "Cloud P2P server")]
@@ -8,20 +8,34 @@ pub struct Config {
     #[arg(long, default_value_t = 1)]
     pub node_id: u32,
 
-    /// Bind for service UDP (client requests, stego)
+    /// Bind for service UDP (client requests)
     #[arg(long)]
     pub udp_bind: Option<String>,
 
     /// Bind for election/heartbeat UDP (cluster-internal)
     #[arg(long)]
-    pub election_bind: Option<String>,
+    pub elect_bind: Option<String>,
 
-    /// Failure simulation cadence
-    #[arg(long, default_value_t = 60)]
+    /// Bind for assignment UDP (leader -> cluster executor announcements)
+    #[arg(long)]
+    pub assign_bind: Option<String>,
+
+    // -------- Assignment timing --------
+    /// How often the leader broadcasts ASSIGN (ms)
+    #[arg(long, default_value_t = 1500)]
+    pub assign_broadcast_every_ms: u64,
+
+    /// Lease duration for ASSIGN (ms)
+    #[arg(long, default_value_t = 4000)]
+    pub assign_lease_ms: u32,
+
+    // -------- Failure simulation (re-enabled) --------
+    /// Period between failures (seconds). 0 disables injection until set.
+    #[arg(long, default_value_t = 0)]
     pub fail_every_secs: u64,
 
-    /// Failure simulation outage length
-    #[arg(long, default_value_t = 20)]
+    /// Duration of each failure window (seconds). 0 disables injection until set.
+    #[arg(long, default_value_t = 0)]
     pub fail_duration_secs: u64,
 }
 
@@ -35,47 +49,51 @@ impl Config {
         ]
     }
 
-    /// Election/heartbeat peers (server-to-server UDP) — CHANGED
+    /// Election/heartbeat peers (server-to-server UDP)
     pub fn election_peers() -> &'static [&'static str] {
         &[
-            "10.40.61.79:8080",  // node 1
-            "10.40.58.169:8081", // node 2
-            "10.40.50.93:8083",  // node 3
+            "10.40.61.79:8080",
+            "10.40.58.169:8081",
+            "10.40.50.93:8083",
         ]
     }
 
-
-    fn parse_addr(s: &str) -> SocketAddr {
-        s.parse::<SocketAddr>().expect("valid IP:PORT")
+    /// Assignment peers (server-to-server UDP)
+    pub fn assignment_peers() -> &'static [&'static str] {
+        &[
+            "10.40.61.79:8280",
+            "10.40.58.169:8281",
+            "10.40.50.93:8283",
+        ]
     }
 
-    /// This node’s service bind (or override via --udp-bind)
-    pub fn udp_bind_addr(&self) -> SocketAddr {
+    pub fn service_bind_addr(&self) -> Option<SocketAddr> {
         if let Some(b) = &self.udp_bind {
-            return Self::parse_addr(b);
+            Some(Self::parse_addr(b))
+        } else {
+            let idx = (self.node_id - 1) as usize;
+            Some(Self::parse_addr(Self::service_peers()[idx]))
         }
-        let idx = (self.node_id as usize).checked_sub(1).expect("node_id >= 1");
-        Self::parse_addr(
-            *Self::service_peers()
-                .get(idx)
-                .expect("node_id out of range for service peers"),
-        )
     }
 
-    /// This node’s election bind (or override via --election-bind)
-    pub fn election_bind_addr(&self) -> SocketAddr {
-        if let Some(b) = &self.election_bind {
-            return Self::parse_addr(b);
+    pub fn election_bind_addr(&self) -> Option<SocketAddr> {
+        if let Some(b) = &self.elect_bind {
+            Some(Self::parse_addr(b))
+        } else {
+            let idx = (self.node_id - 1) as usize;
+            Some(Self::parse_addr(Self::election_peers()[idx]))
         }
-        let idx = (self.node_id as usize).checked_sub(1).expect("node_id >= 1");
-        Self::parse_addr(
-            *Self::election_peers()
-                .get(idx)
-                .expect("node_id out of range for election peers"),
-        )
     }
 
-    /// All **service** peers parsed (use this to broadcast client traffic, if needed)
+    pub fn assignment_bind_addr(&self) -> Option<SocketAddr> {
+        if let Some(b) = &self.assign_bind {
+            Some(Self::parse_addr(b))
+        } else {
+            let idx = (self.node_id - 1) as usize;
+            Some(Self::parse_addr(Self::assignment_peers()[idx]))
+        }
+    }
+
     pub fn service_peer_addrs() -> Vec<SocketAddr> {
         Self::service_peers()
             .iter()
@@ -83,7 +101,6 @@ impl Config {
             .collect()
     }
 
-    /// All **election** peers parsed (used by election.rs)
     pub fn election_peer_addrs() -> Vec<SocketAddr> {
         Self::election_peers()
             .iter()
@@ -91,9 +108,19 @@ impl Config {
             .collect()
     }
 
-    /// Optional sanity checks (called from main.rs)
+    pub fn assignment_peer_addrs(&self) -> Vec<SocketAddr> {
+        Self::assignment_peers()
+            .iter()
+            .map(|s| Self::parse_addr(s))
+            .collect()
+    }
+
+    pub fn parse_addr(s: &str) -> SocketAddr {
+        s.parse()
+            .unwrap_or_else(|_| panic!("Invalid socket address: {}", s))
+    }
+
     pub fn validate(&self) {
-        // Ensure node_id is in range
         let n = Self::service_peers().len();
         assert!(
             (1..=n as u32).contains(&self.node_id),
@@ -101,15 +128,20 @@ impl Config {
             self.node_id,
             n
         );
-        // Ensure service/election lists are same length and disjoint ports per node
         assert_eq!(
             Self::service_peers().len(),
             Self::election_peers().len(),
-            "service/election peers must have same length"
+            "service and election peer lists must have same length"
+        );
+        assert_eq!(
+            Self::service_peers().len(),
+            Self::assignment_peers().len(),
+            "service and assignment peer lists must have same length"
         );
         for i in 0..n {
-            let svc: SocketAddr = Self::parse_addr(Self::service_peers()[i]);
-            let ele: SocketAddr = Self::parse_addr(Self::election_peers()[i]);
+            let svc = Self::parse_addr(Self::service_peers()[i]);
+            let ele = Self::parse_addr(Self::election_peers()[i]);
+            let asg = Self::parse_addr(Self::assignment_peers()[i]);
             assert_eq!(
                 svc.ip(),
                 ele.ip(),
@@ -122,6 +154,23 @@ impl Config {
                 "service and election ports must differ for node {}",
                 i + 1
             );
+            assert_eq!(
+                svc.ip(),
+                asg.ip(),
+                "service and assignment IPs must match for node {}",
+                i + 1
+            );
+            assert_ne!(
+                svc.port(),
+                asg.port(),
+                "service and assignment ports must differ for node {}",
+                i + 1
+            );
         }
+    }
+
+    /// Static executor IP for this phase
+    pub fn static_executor_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(10, 40, 58, 169))
     }
 }

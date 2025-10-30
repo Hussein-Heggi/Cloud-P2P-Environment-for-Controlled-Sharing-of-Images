@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use tokio::sync::RwLock;
 
 #[derive(Clone, Debug)]
@@ -14,17 +14,35 @@ pub struct Row {
 #[derive(Default, Clone, Debug)]
 pub struct HistoryState {
     pub rows: HashMap<u32, Row>,
-    pub rr_next: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ServerState {
     pub node_id: u32,
     pub leader_id: u32,
     pub is_leader: bool,
-    pub ignoring: bool,       // true => node is “DOWN” (silent)
+    pub ignoring: bool,
     pub history: HistoryState,
-    pub live_peers: Vec<u32>, // node_ids currently considered UP
+    pub live_peers: Vec<u32>,
+
+    // current executor (from ASSIGN)
+    pub executor_ip: Option<IpAddr>,              // IP-only; client port is fixed globally
+    pub executor_lease_deadline_ms: Option<u128>, // unix_ms deadline
+}
+
+impl Default for ServerState {
+    fn default() -> Self {
+        Self {
+            node_id: 1,
+            leader_id: 0,
+            is_leader: false,
+            ignoring: false,
+            history: HistoryState::default(),
+            live_peers: vec![1],
+            executor_ip: None,
+            executor_lease_deadline_ms: None,
+        }
+    }
 }
 
 impl ServerState {
@@ -36,6 +54,8 @@ impl ServerState {
             ignoring: false,
             history: HistoryState::default(),
             live_peers: vec![node_id],
+            executor_ip: None,
+            executor_lease_deadline_ms: None,
         }
     }
 }

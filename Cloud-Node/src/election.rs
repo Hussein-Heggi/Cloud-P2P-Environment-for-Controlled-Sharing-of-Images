@@ -49,7 +49,9 @@ pub async fn run_election_loop(
     leader_tx: watch::Sender<u32>,
 ) {
     let node_id = cfg.node_id;
-    let my_addr: SocketAddr = cfg.election_bind_addr();
+    let my_addr: SocketAddr = cfg
+    .election_bind_addr()
+    .expect("election_bind_addr() is None; check --elect-bind or Config::election_peers()");
     let sock = Arc::new(
         UdpSocket::bind(my_addr)
             .await
