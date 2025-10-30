@@ -9,10 +9,11 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::net::UdpSocket;
+use socket2::SockRef;
 use tracing::{debug, info};
 
 use crate::{
@@ -54,6 +55,13 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
         .service_bind_addr()
         .expect("udp_bind (service) not configured");
     let sock = UdpSocket::bind(bind_addr).await?;
+    
+    // Increase receive buffer to handle large bursts (20MB should handle ~10MB image)
+    let sock_ref = SockRef::from(&sock);
+    if let Err(e) = sock_ref.set_recv_buffer_size(20 * 1024 * 1024) {
+        eprintln!("Warning: failed to set recv buffer size: {}", e);
+    }
+    
     println!("Client port bound: {}", bind_addr);
     info!(%bind_addr, "UDP listening (service)");
 
@@ -196,6 +204,14 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                             (c.received as f64 * 100.0) / (c.expect_chunks.max(1) as f64)
                         );
                         debug!(req_id, received=c.received, expect=c.expect_chunks, "chunk progress");
+                        
+                        // Explicit 100% notification
+                        if c.received == c.expect_chunks {
+                            println!(
+                                "✅ [EXECUTOR] 100% RECEIVED | req_id={} - ALL {} chunks arrived!",
+                                req_id, c.expect_chunks
+                            );
+                        }
                     }
 
                     // Done?
