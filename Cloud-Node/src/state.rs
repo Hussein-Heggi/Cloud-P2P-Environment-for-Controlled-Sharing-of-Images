@@ -28,6 +28,10 @@ pub struct ServerState {
     // current executor (from ASSIGN)
     pub executor_ip: Option<IpAddr>,              // IP-only; client port is fixed globally
     pub executor_lease_deadline_ms: Option<u128>, // unix_ms deadline
+
+    // ---- NEW: metrics ----
+    pub requests_received: u64, // count of accepted REQ_META (one per request)
+    pub requests_served: u64,   // count of completed responses
 }
 
 impl Default for ServerState {
@@ -41,6 +45,8 @@ impl Default for ServerState {
             live_peers: vec![1],
             executor_ip: None,
             executor_lease_deadline_ms: None,
+            requests_received: 0,
+            requests_served: 0,
         }
     }
 }
@@ -56,6 +62,8 @@ impl ServerState {
             live_peers: vec![node_id],
             executor_ip: None,
             executor_lease_deadline_ms: None,
+            requests_received: 0,
+            requests_served: 0,
         }
     }
 }

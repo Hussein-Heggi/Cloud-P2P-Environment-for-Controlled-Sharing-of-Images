@@ -26,7 +26,7 @@ pub struct Config {
     pub assign_broadcast_every_ms: u64,
 
     /// Lease duration for ASSIGN (ms)
-    #[arg(long, default_value_t = 4000)]
+    #[arg(long, default_value_t = 1000000)]
     pub assign_lease_ms: u32,
 
     // -------- Failure simulation (re-enabled) --------
@@ -171,6 +171,6 @@ impl Config {
 
     /// Static executor IP for this phase
     pub fn static_executor_ip(&self) -> IpAddr {
-        IpAddr::V4(Ipv4Addr::new(10, 40, 58, 169))
+        IpAddr::V4(Ipv4Addr::new(10, 40, 61, 79))
     }
 }

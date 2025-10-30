@@ -67,6 +67,7 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
         image_len: usize,
         buffer: Vec<u8>,
         received: u32,
+        first_chunk_logged: bool, // instrumentation flag
     }
     let mut ctxs: HashMap<u32, ReqCtx> = HashMap::new();
 
@@ -89,6 +90,10 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                     let s = state.read().await;
                     is_executor(&*s, my_client_ip)
                 };
+
+                // Optional: if you want a line for every SELECT arrival:
+                // println!("SELECT received from {} | req_id={}", peer, req_id);
+
                 if am_exec {
                     let mut pkt = [0u8; 1 + 4];
                     pkt[0] = ACCEPT;
@@ -131,6 +136,13 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
 
                 // meta_json is appended after the header; not needed for echo
                 ctxs.insert(req_id, c);
+
+                // Count as a "received" request
+                {
+                    let mut s = state.write().await;
+                    s.requests_received = s.requests_received.saturating_add(1);
+                }
+
                 println!(
                     "[EXECUTOR] REQ_META accepted from {} | req_id={} total_chunks={} image_len={} meta_len={}",
                     peer, req_id, total_chunks, img_bytes, meta_bytes
@@ -160,10 +172,40 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                 }
 
                 if let Some(c) = ctxs.get_mut(&req_id) {
+                    // First-chunk visibility (once per request)
+                    if !c.first_chunk_logged {
+                        c.first_chunk_logged = true;
+                        println!(
+                            "[EXECUTOR] REQ_CHUNK first seen from {} | req_id={} seq={} ({} bytes)",
+                            peer, req_id, seq, payload.len()
+                        );
+                        debug!(%peer, req_id, seq, len=payload.len(), "first REQ_CHUNK seen");
+                    }
+
+                    // Append and bump counter
                     c.buffer.extend_from_slice(payload);
                     c.received += 1;
 
+                    // Progress every 1000 chunks (tune as needed)
+                    if c.received % 1000 == 0 || c.received == c.expect_chunks {
+                        println!(
+                            "[EXECUTOR] REQ_CHUNK progress | req_id={} {}/{} chunks ({:.1}%)",
+                            req_id,
+                            c.received,
+                            c.expect_chunks,
+                            (c.received as f64 * 100.0) / (c.expect_chunks.max(1) as f64)
+                        );
+                        debug!(req_id, received=c.received, expect=c.expect_chunks, "chunk progress");
+                    }
+
+                    // Done?
                     if c.received == c.expect_chunks || c.buffer.len() >= c.image_len {
+                        println!(
+                            "[EXECUTOR] All chunks received | req_id={} chunks={} bytes={}",
+                            req_id, c.received, c.buffer.len()
+                        );
+                        debug!(req_id, chunks=c.received, bytes=c.buffer.len(), "all chunks in");
+
                         // Simulate processing ~1s
                         tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -194,6 +236,12 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                             let _ = sock.send_to(&pkt, peer).await;
                             off += take;
                             seq_out += 1;
+                        }
+
+                        // increment 'served' counter when we finish a response
+                        {
+                            let mut s = state.write().await;
+                            s.requests_served = s.requests_served.saturating_add(1);
                         }
 
                         println!(
