@@ -9,6 +9,20 @@ use std::thread;
 use socket2::SockRef;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// Wire constants (must match server)
 const REQ_META: u8 = 0;
 const REQ_CHUNK: u8 = 1;
@@ -16,18 +30,74 @@ const RESP_META: u8 = 2;
 const RESP_CHUNK: u8 = 3;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// New tiny control messages for selection fan-out
 const SELECT: u8 = 4;
 const ACCEPT: u8 = 5;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 /// Keep UDP payload safe for typical MTUs
 const MAX_DGRAM: usize = 1200;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// Default timeouts
-const DEFAULT_SELECT_TIMEOUT_MS: u64 = 100000; // selection window
-const DEFAULT_IO_TIMEOUT_MS: u64 = 100000;    // recv/send after upload
+const DEFAULT_SELECT_TIMEOUT_MS: u64 = 10000; // selection window
+const DEFAULT_IO_TIMEOUT_MS: u64 = 10000;    // recv/send after upload
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -120,6 +190,11 @@ struct Cli {
  io_timeout_ms: u64,
 
 
+ /// Pacing delay in microseconds per packet sent (0 = no pacing)
+ #[arg(long, default_value_t = 1000)]
+ pacing_us: u64,
+
+
  /// INTERNAL: set by parent for child users
  #[arg(long, default_value_t = false, hide = true)]
  child: bool,
@@ -206,6 +281,8 @@ fn main() -> Result<()> {
          child_args.push(cli.selection_timeout_ms.to_string());
          child_args.push("--io-timeout-ms".into());
          child_args.push(cli.io_timeout_ms.to_string());
+         child_args.push("--pacing-us".into());
+         child_args.push(cli.pacing_us.to_string());
          child_args.push("--child".into());
          child_args.push("--proc-idx".into());
          child_args.push(i.to_string());
@@ -355,40 +432,44 @@ fn run_user_process(
 
 
      // Send REQ_CHUNKs: [u8 ty=REQ_CHUNK][u32 req_id][u32 seq][bytes...]
-    let mut offset = 0usize;
-    let mut seq_idx = 0u32;
-    let send_start = Instant::now();
-   
-    println!("[CLIENT] Sending {} chunks with 1ms pacing...", total_chunks);
-  
-    while offset < image_bytes.len() {
-        let take = (image_bytes.len() - offset).min(chunk_payload);
-        let mut pkt = Vec::with_capacity(1 + 4 + 4 + take);
-        pkt.push(REQ_CHUNK);
-        pkt.extend(req_id.to_le_bytes());
-        pkt.extend(seq_idx.to_le_bytes());
-        pkt.extend(&image_bytes[offset..offset + take]);
-        sock.send_to(&pkt, target)
-            .with_context(|| format!("send REQ_CHUNK seq={} to {}", seq_idx, target))?;
-      
-        // Progress logging every 1000 chunks
-        if seq_idx % 1000 == 0 {
-            println!("[CLIENT] Sent {}/{} chunks ({:.1}%)",
-                     seq_idx, total_chunks,
-                     (seq_idx as f64 * 100.0) / total_chunks as f64);
-        }
-      
-        offset += take;
-        seq_idx += 1;
-       
-        // *** FIX: Sleep 1ms after EVERY packet (no conditional!) ***
-        thread::sleep(Duration::from_millis(1));
-    }
-  
-    let send_duration = send_start.elapsed();
-    println!("[CLIENT] All {} chunks sent in {:.2}s (paced)", total_chunks, send_duration.as_secs_f64());
-
-
+     let mut offset = 0usize;
+     let mut seq_idx = 0u32;
+     let send_start = Instant::now();
+     
+     if cli.pacing_us > 0 {
+         println!("[CLIENT] Sending {} chunks with {}µs pacing...", total_chunks, cli.pacing_us);
+     } else {
+         println!("[CLIENT] Sending {} chunks with NO pacing (max speed)...", total_chunks);
+     }
+    
+     while offset < image_bytes.len() {
+         let take = (image_bytes.len() - offset).min(chunk_payload);
+         let mut pkt = Vec::with_capacity(1 + 4 + 4 + take);
+         pkt.push(REQ_CHUNK);
+         pkt.extend(req_id.to_le_bytes());
+         pkt.extend(seq_idx.to_le_bytes());
+         pkt.extend(&image_bytes[offset..offset + take]);
+         sock.send_to(&pkt, target)
+             .with_context(|| format!("send REQ_CHUNK seq={} to {}", seq_idx, target))?;
+        
+         // Progress logging every 1000 chunks
+         if seq_idx % 1000 == 0 {
+             println!("[CLIENT] Sent {}/{} chunks ({:.1}%)",
+                      seq_idx, total_chunks,
+                      (seq_idx as f64 * 100.0) / total_chunks as f64);
+         }
+        
+         offset += take;
+         seq_idx += 1;
+         
+         // Configurable pacing
+         if cli.pacing_us > 0 {
+             thread::sleep(Duration::from_micros(cli.pacing_us));
+         }
+     }
+    
+     let send_duration = send_start.elapsed();
+     println!("[CLIENT] All {} chunks sent in {:.2}s", total_chunks, send_duration.as_secs_f64());
 
 
      // ---- Phase C: receive RESP_META + RESP_CHUNK(s) from target ----
@@ -572,12 +653,3 @@ fn now_unix_ms() -> u128 {
      .unwrap()
      .as_millis()
 }
-
-
-
-
-
-
-
-
-

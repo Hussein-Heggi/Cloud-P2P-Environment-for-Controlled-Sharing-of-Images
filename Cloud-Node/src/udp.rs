@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::net::UdpSocket;
@@ -50,6 +50,9 @@ fn is_executor(state: &ServerState, my_client_ip: IpAddr) -> bool {
 }
 
 pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<()> {
+    // Extract pacing parameter
+    let pacing_us = cfg.pacing_us;
+    
     // Bind client-facing service socket (fixed port per node)
     let bind_addr = cfg
         .service_bind_addr()
@@ -239,7 +242,7 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                         hdr[9..13].copy_from_slice(&(out_len as u32).to_le_bytes());
                         let _ = sock.send_to(&hdr, peer).await;
 
-                        // RESP_CHUNK(s)
+                        // RESP_CHUNK(s) - with configurable pacing
                         let mut off = 0usize;
                         let mut seq_out = 0u32;
                         while off < out_len {
@@ -250,8 +253,14 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                             pkt.extend(seq_out.to_le_bytes());
                             pkt.extend_from_slice(&c.buffer[off..off + take]);
                             let _ = sock.send_to(&pkt, peer).await;
+                            
                             off += take;
                             seq_out += 1;
+                            
+                            // Configurable pacing to prevent client buffer overflow
+                            if pacing_us > 0 {
+                                tokio::time::sleep(Duration::from_micros(pacing_us)).await;
+                            }
                         }
 
                         // increment 'served' counter when we finish a response
