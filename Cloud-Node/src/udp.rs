@@ -226,7 +226,7 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                         debug!(req_id, chunks=c.received, bytes=c.buffer.len(), "all chunks in");
 
                         // Simulate processing ~1s
-                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                        std::thread::sleep(Duration::from_millis(1000));
 
                         // Echo back
                         let out_len = c.image_len;
@@ -259,7 +259,7 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                             
                             // Configurable pacing to prevent client buffer overflow
                             if pacing_us > 0 {
-                                tokio::time::sleep(Duration::from_micros(pacing_us)).await;
+                                std::thread::sleep(Duration::from_micros(pacing_us));
                             }
                         }
 

@@ -21,7 +21,7 @@ pub struct Config {
     pub assign_bind: Option<String>,
 
     /// Pacing delay in microseconds per response packet (0 = no pacing)
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 150)]
     pub pacing_us: u64,
 
     // -------- Assignment timing --------
@@ -47,7 +47,7 @@ impl Config {
     /// Service peers (client-facing UDP)
     pub fn service_peers() -> &'static [&'static str] {
         &[
-            "10.40.61.79:8180",  // node 1
+            "10.40.63.10:8180",  // node 1
             "10.40.58.169:8181", // node 2
             "10.40.50.93:8183",  // node 3
         ]
@@ -56,7 +56,7 @@ impl Config {
     /// Election/heartbeat peers (server-to-server UDP)
     pub fn election_peers() -> &'static [&'static str] {
         &[
-            "10.40.61.79:8080",
+            "10.40.63.10:8080",
             "10.40.58.169:8081",
             "10.40.50.93:8083",
         ]
@@ -65,7 +65,7 @@ impl Config {
     /// Assignment peers (server-to-server UDP)
     pub fn assignment_peers() -> &'static [&'static str] {
         &[
-            "10.40.61.79:8280",
+            "10.40.63.10:8280",
             "10.40.58.169:8281",
             "10.40.50.93:8283",
         ]
@@ -175,6 +175,6 @@ impl Config {
 
     /// Static executor IP for this phase
     pub fn static_executor_ip(&self) -> IpAddr {
-        IpAddr::V4(Ipv4Addr::new(10, 40, 61, 79))
+        IpAddr::V4(Ipv4Addr::new(10, 40, 63, 10))
     }
 }
