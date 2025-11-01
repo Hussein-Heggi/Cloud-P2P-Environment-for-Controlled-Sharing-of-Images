@@ -339,18 +339,18 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                         // ============================================================
                         // STEP A: Save original image (validation)
                         // ============================================================
-                        let original_path = format!("./server_test/req_{}_original.png", req_id);
-                        match tokio::fs::write(&original_path, &buffer).await {
-                            Ok(_) => {
-                                println!("[EXECUTOR] Original image saved: {}", original_path);
-                                debug!(path=%original_path, "Original image saved");
-                            }
-                            Err(e) => {
-                                eprintln!("[EXECUTOR] Failed to save original image: {} | Error: {}", original_path, e);
-                                warn!(path=%original_path, error=%e, "Failed to save original image");
-                                // Continue despite error (per your silent drop policy)
-                            }
-                        }
+                        // let original_path = format!("./server_test/req_{}_original.png", req_id);
+                        // match tokio::fs::write(&original_path, &buffer).await {
+                        //     Ok(_) => {
+                        //         println!("[EXECUTOR] Original image saved: {}", original_path);
+                        //         debug!(path=%original_path, "Original image saved");
+                        //     }
+                        //     Err(e) => {
+                        //         eprintln!("[EXECUTOR] Failed to save original image: {} | Error: {}", original_path, e);
+                        //         warn!(path=%original_path, error=%e, "Failed to save original image");
+                        //         // Continue despite error (per your silent drop policy)
+                        //     }
+                        // }
 
                         // ============================================================
                         // STEP B: Transform metadata
