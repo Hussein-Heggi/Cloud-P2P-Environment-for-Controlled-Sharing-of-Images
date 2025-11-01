@@ -20,9 +20,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // If stego is a local module: use crate::stego::{extract, Meta, StegoError};
 // For now, I'll inline the necessary structures and assume you'll link the library
 
-
-
-
 /// Wire constants (must match server)    |                                                   ^^^^^^^^^ the trait `SampleRange` is not implemented for `RangeInclusive<u64>`
 const REQ_META: u8 = 0;
 const REQ_CHUNK: u8 = 1;
@@ -31,35 +28,20 @@ const RESP_CHUNK: u8 = 3;
 const SELECT: u8 = 4;
 const ACCEPT: u8 = 5;
 
-
-
-
 /// Keep UDP payload safe for typical MTUs
 const MAX_DGRAM: usize = 1200;
-
-
-
 
 /// Timeout configurations
 const INITIAL_TIMEOUT_MS: u64 = 1000;      // SELECT → ACCEPT
 const SECONDARY_TIMEOUT_MS: u64 = 10000;   // REQ_META → RESP_META
 const TERTIARY_TIMEOUT_MS: u64 = 10000;    // RESP_META → all RESP_CHUNKs
 
-
-
-
 /// Retry configuration
 const MAX_ATTEMPTS: u32 = 3;
 const BASE_BACKOFF_MS: u64 = 100;
 
-
-
-
 /// Global sequence counter for request ID generation
 static SEQUENCE_COUNTER: AtomicU32 = AtomicU32::new(0);
-
-
-
 
 #[derive(ValueEnum, Clone, Debug)]
 enum Operation {
@@ -68,9 +50,6 @@ enum Operation {
    Grant,
    Revoke,
 }
-
-
-
 
 impl Operation {
    fn as_str(&self) -> &'static str {

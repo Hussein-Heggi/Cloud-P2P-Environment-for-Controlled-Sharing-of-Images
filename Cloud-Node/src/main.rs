@@ -155,7 +155,39 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Periodic history table printer (every 10s)
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = interval(Duration::from_secs(10));
+            loop {
+                tick.tick().await;
+                let s = st.read().await;
+                
+                println!("[HISTORY] Table has {} entries:", s.history.len());
+                if s.history.is_empty() {
+                    println!("  (empty)");
+                } else {
+                    let mut entries: Vec<_> = s.history.iter().collect();
+                    entries.sort_by_key(|(req_id, _)| *req_id);
+                    
+                    for (req_id, record) in entries {
+                        let path_display = record.path_to_output_image
+                            .as_ref()
+                            .map(|p| p.as_str())
+                            .unwrap_or("(no local path)");
+                        println!(
+                            "  req_id={} executor={} path={} timestamp={}",
+                            req_id, record.executor_node, path_display, record.timestamp
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     println!("Server up. Press Ctrl-C to exit.");
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
+
