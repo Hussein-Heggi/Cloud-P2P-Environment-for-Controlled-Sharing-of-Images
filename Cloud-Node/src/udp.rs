@@ -1,4 +1,4 @@
-//! UDP service (client port) — SELECT/ACCEPT + upload/echo pipeline
+//! UDP service (client port) – SELECT/ACCEPT + upload/echo pipeline
 //! Wire (LE):
 //!   REQ_META  (type=0): [u8][u32 req_id][u32 total_chunks][u32 img_bytes][u32 meta_bytes]
 //!   REQ_CHUNK (type=1): [u8][u32 req_id][u32 seq][bytes...]
@@ -14,7 +14,8 @@ use std::{
 };
 use tokio::net::UdpSocket;
 use socket2::SockRef;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Config,
@@ -49,6 +50,91 @@ fn is_executor(state: &ServerState, my_client_ip: IpAddr) -> bool {
     }
 }
 
+// ============================================================================
+// Metadata structures for transformation
+// ============================================================================
+
+/// Client's "allow" entry format
+#[derive(Debug, Deserialize)]
+struct ClientAllow {
+    user: String,
+    views: u32,
+}
+
+/// Client's full metadata format (what they send)
+#[derive(Debug, Deserialize)]
+struct ClientMeta {
+    owner: String,
+    allow: Vec<ClientAllow>,
+    // We ignore other fields (op, sender_id, etc.) for steganography
+}
+
+/// Stego library's AccessEntry format
+#[derive(Debug, Serialize)]
+struct StegoAccessEntry {
+    user: String,
+    remaining_views: u32,
+}
+
+/// Stego library's Meta format (what embed_meta_return_png expects)
+#[derive(Debug, Serialize)]
+struct StegoMeta {
+    owner: String,
+    allow: Vec<StegoAccessEntry>,
+}
+
+/// Transform client metadata to stego format
+fn transform_metadata(client_meta_json: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Parse client's full metadata
+    let client_meta: ClientMeta = serde_json::from_slice(client_meta_json)?;
+    
+    // Transform allow entries: views -> remaining_views
+    let stego_allow: Vec<StegoAccessEntry> = client_meta
+        .allow
+        .into_iter()
+        .map(|entry| StegoAccessEntry {
+            user: entry.user,
+            remaining_views: entry.views,
+        })
+        .collect();
+    
+    // Create simplified stego metadata
+    let stego_meta = StegoMeta {
+        owner: client_meta.owner,
+        allow: stego_allow,
+    };
+    
+    // Serialize to JSON for steganography
+    let stego_json = serde_json::to_vec(&stego_meta)?;
+    Ok(stego_json)
+}
+
+// ============================================================================
+// Request context - FIXED: Store chunks by sequence number
+// ============================================================================
+
+struct ReqCtx {
+    expect_chunks: u32,
+    image_len: usize,
+    chunks: HashMap<u32, Vec<u8>>,  // ← FIXED: Store chunks by seq number
+    meta_json: Vec<u8>,
+    received: u32,
+    first_chunk_logged: bool,
+}
+
+impl Default for ReqCtx {
+    fn default() -> Self {
+        Self {
+            expect_chunks: 0,
+            image_len: 0,
+            chunks: HashMap::new(),
+            meta_json: Vec::new(),
+            received: 0,
+            first_chunk_logged: false,
+        }
+    }
+}
+
 pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<()> {
     // Extract pacing parameter
     let pacing_us = cfg.pacing_us;
@@ -72,14 +158,6 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
     let my_client_ip = bind_addr.ip();
 
     // Per-request assembly (executor only)
-    #[derive(Default)]
-    struct ReqCtx {
-        expect_chunks: u32,
-        image_len: usize,
-        buffer: Vec<u8>,
-        received: u32,
-        first_chunk_logged: bool, // instrumentation flag
-    }
     let mut ctxs: HashMap<u32, ReqCtx> = HashMap::new();
 
     let mut buf = [0u8; 64 * 1024];
@@ -101,9 +179,6 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                     let s = state.read().await;
                     is_executor(&*s, my_client_ip)
                 };
-
-                // Optional: if you want a line for every SELECT arrival:
-                // println!("SELECT received from {} | req_id={}", peer, req_id);
 
                 if am_exec {
                     let mut pkt = [0u8; 1 + 4];
@@ -139,13 +214,19 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                     continue;
                 }
 
+                // Extract metadata JSON from packet
+                let meta_json = if meta_bytes > 0 && n >= HDR_META + meta_bytes {
+                    buf[HDR_META..HDR_META + meta_bytes].to_vec()
+                } else {
+                    Vec::new() // No metadata or packet too short
+                };
+
                 let mut c = ReqCtx::default();
                 c.expect_chunks = total_chunks;
                 c.image_len = img_bytes;
-                c.buffer.clear();
-                c.buffer.reserve(img_bytes);
+                c.meta_json = meta_json;
+                c.chunks = HashMap::with_capacity(total_chunks as usize);  // Pre-allocate
 
-                // meta_json is appended after the header; not needed for echo
                 ctxs.insert(req_id, c);
 
                 // Count as a "received" request
@@ -193,8 +274,8 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                         debug!(%peer, req_id, seq, len=payload.len(), "first REQ_CHUNK seen");
                     }
 
-                    // Append and bump counter
-                    c.buffer.extend_from_slice(payload);
+                    // ← FIXED: Store chunk by sequence number instead of appending
+                    c.chunks.insert(seq, payload.to_vec());
                     c.received += 1;
 
                     // Progress every 1000 chunks (tune as needed)
@@ -218,21 +299,100 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                     }
 
                     // Done?
-                    if c.received == c.expect_chunks || c.buffer.len() >= c.image_len {
+                    if c.received == c.expect_chunks {
                         println!(
-                            "[EXECUTOR] All chunks received | req_id={} chunks={} bytes={}",
-                            req_id, c.received, c.buffer.len()
+                            "[EXECUTOR] All chunks received | req_id={} chunks={}",
+                            req_id, c.received
                         );
-                        debug!(req_id, chunks=c.received, bytes=c.buffer.len(), "all chunks in");
+                        debug!(req_id, chunks=c.received, "all chunks in");
 
-                        // Simulate processing ~1s
-                        std::thread::sleep(Duration::from_millis(1000));
+                        // ============================================================
+                        // FIXED: Reassemble chunks in sequence order
+                        // ============================================================
+                        let mut buffer = Vec::with_capacity(c.image_len);
+                        let mut missing_chunks = Vec::new();
+                        
+                        for seq in 0..c.expect_chunks {
+                            if let Some(chunk_data) = c.chunks.get(&seq) {
+                                buffer.extend_from_slice(chunk_data);
+                            } else {
+                                missing_chunks.push(seq);
+                            }
+                        }
+                        
+                        if !missing_chunks.is_empty() {
+                            eprintln!(
+                                "[EXECUTOR] Missing chunks {:?} | req_id={} - dropping request",
+                                missing_chunks, req_id
+                            );
+                            warn!(req_id, missing=?missing_chunks, "Missing chunks - dropping request");
+                            ctxs.remove(&req_id);
+                            continue;
+                        }
 
-                        // Echo back
-                        let out_len = c.image_len;
+                        println!(
+                            "[EXECUTOR] Chunks reassembled in order | req_id={} bytes={}",
+                            req_id, buffer.len()
+                        );
+                        debug!(req_id, bytes=buffer.len(), "chunks reassembled");
+
+                        // ============================================================
+                        // STEP A: Save original image (validation)
+                        // ============================================================
+                        let original_path = format!("./server_test/req_{}_original.png", req_id);
+                        match tokio::fs::write(&original_path, &buffer).await {
+                            Ok(_) => {
+                                println!("[EXECUTOR] Original image saved: {}", original_path);
+                                debug!(path=%original_path, "Original image saved");
+                            }
+                            Err(e) => {
+                                eprintln!("[EXECUTOR] Failed to save original image: {} | Error: {}", original_path, e);
+                                warn!(path=%original_path, error=%e, "Failed to save original image");
+                                // Continue despite error (per your silent drop policy)
+                            }
+                        }
+
+                        // ============================================================
+                        // STEP B: Transform metadata
+                        // ============================================================
+                        let stego_meta_json = match transform_metadata(&c.meta_json) {
+                            Ok(json) => json,
+                            Err(e) => {
+                                eprintln!("[EXECUTOR] Metadata transformation failed | req_id={} | Error: {}", req_id, e);
+                                warn!(req_id, error=%e, "Metadata transformation failed - dropping request");
+                                ctxs.remove(&req_id);
+                                continue;
+                            }
+                        };
+
+                        println!("[EXECUTOR] Metadata transformed | req_id={}", req_id);
+                        debug!(req_id, "Metadata transformed for steganography");
+
+                        // ============================================================
+                        // STEP C: Apply steganography
+                        // ============================================================
+                        let encrypted_png = match crate::stego_service::embed_meta_return_png(&buffer, &stego_meta_json) {
+                            Ok(png) => png,
+                            Err(e) => {
+                                eprintln!("[EXECUTOR] Steganography failed | req_id={} | Error: {}", req_id, e);
+                                warn!(req_id, error=%e, "Steganography failed - dropping request");
+                                ctxs.remove(&req_id);
+                                continue;
+                            }
+                        };
+
+                        println!(
+                            "[EXECUTOR] Steganography complete | req_id={} original_size={} encrypted_size={}",
+                            req_id, buffer.len(), encrypted_png.len()
+                        );
+                        debug!(req_id, original_size=buffer.len(), encrypted_size=encrypted_png.len(), "Steganography complete");
+
+                        // ============================================================
+                        // STEP D: Send encrypted image back to client
+                        // ============================================================
+                        let out_len = encrypted_png.len();
                         let payload_cap = MAX_DGRAM - (1 + 4 + 4); // RESP_CHUNK header space
-                        let total_out_chunks =
-                            ((out_len + payload_cap - 1) / payload_cap) as u32;
+                        let total_out_chunks = ((out_len + payload_cap - 1) / payload_cap) as u32;
 
                         // RESP_META: [2][req_id][total_chunks][out_len]
                         let mut hdr = [0u8; 1 + 4 + 4 + 4];
@@ -241,6 +401,12 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                         hdr[5..9].copy_from_slice(&total_out_chunks.to_le_bytes());
                         hdr[9..13].copy_from_slice(&(out_len as u32).to_le_bytes());
                         let _ = sock.send_to(&hdr, peer).await;
+
+                        println!(
+                            "[EXECUTOR] RESP_META sent | req_id={} total_chunks={} out_len={}",
+                            req_id, total_out_chunks, out_len
+                        );
+                        debug!(%peer, req_id, total_chunks=%total_out_chunks, out_len, "RESP_META sent");
 
                         // RESP_CHUNK(s) - with configurable pacing
                         let mut off = 0usize;
@@ -251,7 +417,7 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                             pkt.push(RESP_CHUNK);
                             pkt.extend(req_id.to_le_bytes());
                             pkt.extend(seq_out.to_le_bytes());
-                            pkt.extend_from_slice(&c.buffer[off..off + take]);
+                            pkt.extend_from_slice(&encrypted_png[off..off + take]);
                             let _ = sock.send_to(&pkt, peer).await;
                             
                             off += take;

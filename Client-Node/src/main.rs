@@ -1,7 +1,8 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -9,6 +10,13 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+// NOTE: Import the stego library for metadata extraction
+// This assumes the stego library is available as a dependency
+// Adjust the import path based on your project structure
+// If stego is a separate crate: use stego::{extract, Meta, StegoError};
+// If stego is a local module: use crate::stego::{extract, Meta, StegoError};
+// For now, I'll inline the necessary structures and assume you'll link the library
 
 
 /// Wire constants (must match server)
@@ -103,7 +111,7 @@ struct Cli {
 
 
    /// Optional "allow" CSV: user:views,user2:views
-   #[arg(long, default_value = "")]
+   #[arg(long, default_value = "bob")]
    allow: String,
 
 
@@ -133,7 +141,7 @@ struct Cli {
 }
 
 
-/// Policy structs for meta JSON
+/// Policy structs for meta JSON (sending to server)
 #[derive(Serialize, Clone)]
 struct Allow {
    user: String,
@@ -174,6 +182,25 @@ struct Meta<'a> {
    revoke: Option<Revoke<'a>>,
    ts_unix_ms: u128,
    selection_phase: &'a str,
+}
+
+
+// ============================================================================
+// Steganography structures for extraction (matches lib.rs)
+// ============================================================================
+
+/// AccessEntry from stego library (what we extract)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AccessEntry {
+   user: String,
+   remaining_views: u32,
+}
+
+/// Meta from stego library (what we extract)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExtractedMeta {
+   owner: String,
+   allow: Vec<AccessEntry>,
 }
 
 
@@ -230,7 +257,6 @@ enum RequestResult {
 fn main() -> Result<()> {
    let cli = Cli::parse();
    let peers = parse_peers(&cli.peers)?;
-
 
    if !cli.child && cli.processes > 1 {
        // Parent: spawn N child processes (users)
@@ -308,65 +334,35 @@ fn run_client_process(cli: &Cli, peers: &[SocketAddr]) -> Result<()> {
    let allow_vec = parse_allow(&cli.allow);
 
 
-   // Process all requests with individual retry support
-   let mut succeeded = 0;
-   let mut initial_timeouts = 0;
-   let mut secondary_timeouts = 0;
-   let mut tertiary_timeouts = 0;
-   let mut other_failures = 0;
-
-
-   for req_num in 0..cli.requests_per_user {
-       let req_id = generate_request_id(local_ip);
+   for i in 1..=cli.requests_per_user {
+       println!("\n[CLIENT] ===== Starting Request {}/{} =====", i, cli.requests_per_user);
       
-       println!("\n[CLIENT] === Request {}/{} | req_id={} ===",
-                req_num + 1, cli.requests_per_user, req_id);
+       let req_id = generate_request_id(local_ip);
+       let mut ctx = RequestContext::new(req_id);
 
+       let result = execute_request_with_retry(
+           cli,
+           &sock,
+           peers,
+           &mut ctx,
+           sender_id,
+           &image_bytes,
+           &allow_vec,
+       );
 
-       match execute_request_with_retry(cli, &sock, peers, req_id, sender_id, &image_bytes, &allow_vec) {
-           RequestResult::Success => {
-               succeeded += 1;
-               println!("[CLIENT] ✓ Request {} succeeded (req_id={})", req_num + 1, req_id);
+       match result {
+           Ok(_) => println!("[CLIENT] ===== Request {}/{} COMPLETED =====\n", i, cli.requests_per_user),
+           Err(e) => {
+               eprintln!("[CLIENT] ===== Request {}/{} FAILED: {} =====\n", i, cli.requests_per_user, e);
            }
-           RequestResult::InitialTimeout => {
-               initial_timeouts += 1;
-               eprintln!("[CLIENT] ✗ Request {} FAILED: Initial timeout (SELECT → ACCEPT) (req_id={})",
-                        req_num + 1, req_id);
-           }
-           RequestResult::SecondaryTimeout => {
-               secondary_timeouts += 1;
-               eprintln!("[CLIENT] ✗ Request {} FAILED: Secondary timeout (REQ_META → RESP_META) (req_id={})",
-                        req_num + 1, req_id);
-           }
-           RequestResult::TertiaryTimeout => {
-               tertiary_timeouts += 1;
-               eprintln!("[CLIENT] ✗ Request {} FAILED: Tertiary timeout (incomplete RESP_CHUNKs) (req_id={})",
-                        req_num + 1, req_id);
-           }
-           RequestResult::OtherFailure => {
-               other_failures += 1;
-               eprintln!("[CLIENT] ✗ Request {} FAILED: Other error (req_id={})",
-                        req_num + 1, req_id);
-           }
+       }
+
+       if i < cli.requests_per_user {
+           thread::sleep(Duration::from_millis(100));
        }
    }
 
-
-   let total_failed = initial_timeouts + secondary_timeouts + tertiary_timeouts + other_failures;
-
-
-   println!("\n[CLIENT] === SUMMARY for sender_id={} ===", sender_id);
-   println!("[CLIENT] Total requests: {}", cli.requests_per_user);
-   println!("[CLIENT] Succeeded: {} ({:.1}%)", succeeded,
-            (succeeded as f64 * 100.0) / cli.requests_per_user as f64);
-   println!("[CLIENT] Failed: {} ({:.1}%)", total_failed,
-            (total_failed as f64 * 100.0) / cli.requests_per_user as f64);
-   println!("[CLIENT]   - Initial timeouts (SELECT → ACCEPT): {}", initial_timeouts);
-   println!("[CLIENT]   - Secondary timeouts (REQ_META → RESP_META): {}", secondary_timeouts);
-   println!("[CLIENT]   - Tertiary timeouts (incomplete RESP_CHUNKs): {}", tertiary_timeouts);
-   println!("[CLIENT]   - Other failures: {}", other_failures);
-
-
+   println!("[CLIENT] All {} requests completed", cli.requests_per_user);
    Ok(())
 }
 
@@ -375,59 +371,41 @@ fn execute_request_with_retry(
    cli: &Cli,
    sock: &UdpSocket,
    peers: &[SocketAddr],
-   req_id: u32,
+   ctx: &mut RequestContext,
    sender_id: u32,
    image_bytes: &[u8],
    allow_vec: &[Allow],
-) -> RequestResult {
-   let mut ctx = RequestContext::new(req_id);
-   let mut last_error_type = RequestResult::OtherFailure;
-
+) -> Result<()> {
+   let mut last_error: Option<anyhow::Error> = None;
 
    while ctx.attempt <= MAX_ATTEMPTS {
-       if ctx.attempt > 1 {
-           // Exponential backoff: 0ms, 100ms, 200ms
-           let backoff = Duration::from_millis(BASE_BACKOFF_MS * (ctx.attempt - 1) as u64);
-           println!("[RETRY] Attempt {}/{} for req_id={} after {:?} backoff",
-                    ctx.attempt, MAX_ATTEMPTS, req_id, backoff);
-           thread::sleep(backoff);
-       }
-
-
-       match execute_single_request_attempt(cli, sock, peers, &mut ctx, sender_id, image_bytes, allow_vec) {
+       println!("[ATTEMPT] req_id={} attempt={}/{}", ctx.req_id, ctx.attempt, MAX_ATTEMPTS);
+      
+       match execute_single_attempt(cli, sock, peers, ctx, sender_id, image_bytes, allow_vec) {
            Ok(_) => {
-               return RequestResult::Success;
+               println!("[ATTEMPT] req_id={} succeeded on attempt {}", ctx.req_id, ctx.attempt);
+               return Ok(());
            }
            Err(e) => {
-               // Determine error type from error message
-               let err_msg = e.to_string();
-               last_error_type = if err_msg.contains("Initial timeout") {
-                   RequestResult::InitialTimeout
-               } else if err_msg.contains("Secondary timeout") {
-                   RequestResult::SecondaryTimeout
-               } else if err_msg.contains("Tertiary timeout") {
-                   RequestResult::TertiaryTimeout
-               } else {
-                   RequestResult::OtherFailure
-               };
-
-
-               if ctx.attempt >= MAX_ATTEMPTS {
-                   return last_error_type;
+               last_error = Some(e);
+               println!("[ATTEMPT] req_id={} failed on attempt {}: {}", 
+                       ctx.req_id, ctx.attempt, last_error.as_ref().unwrap());
+              
+               if ctx.attempt < MAX_ATTEMPTS {
+                   let backoff = BASE_BACKOFF_MS * (1 << (ctx.attempt - 1));
+                   println!("[RETRY] Waiting {}ms before retry...", backoff);
+                   thread::sleep(Duration::from_millis(backoff));
+                   ctx.reset_for_retry();
                }
-               eprintln!("[RETRY] Attempt {}/{} failed for req_id={}: {}",
-                        ctx.attempt, MAX_ATTEMPTS, req_id, e);
-               ctx.reset_for_retry();
            }
        }
    }
 
-
-   last_error_type
+   Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All attempts failed")))
 }
 
 
-fn execute_single_request_attempt(
+fn execute_single_attempt(
    cli: &Cli,
    sock: &UdpSocket,
    peers: &[SocketAddr],
@@ -438,16 +416,13 @@ fn execute_single_request_attempt(
 ) -> Result<()> {
    let attempt_start = Instant::now();
 
-
    // Phase 1: SELECT → ACCEPT
    send_select(sock, peers, ctx.req_id, sender_id, cli.op.to_code(), image_bytes.len())?;
    ctx.state = RequestState::SelectSent;
 
-
    let target = match wait_first_accept(sock, ctx.req_id, Duration::from_millis(INITIAL_TIMEOUT_MS))? {
        Some(addr) => {
-           println!("[SELECT] ACCEPT received from {} (req_id={}, attempt={})",
-                    addr, ctx.req_id, ctx.attempt);
+           println!("[ACCEPT] Received from {} (req_id={})", addr, ctx.req_id);
            addr
        }
        None => {
@@ -455,15 +430,12 @@ fn execute_single_request_attempt(
        }
    };
 
-
    ctx.target = Some(target);
    ctx.state = RequestState::AcceptReceived;
 
-
-   // Phase 2: Upload REQ_META + REQ_CHUNKs
+   // Phase 2: Upload image chunks
    upload_request(cli, sock, target, ctx.req_id, sender_id, image_bytes, allow_vec)?;
    ctx.state = RequestState::ChunksSent;
-
 
    // Phase 3: Wait for RESP_META
    let (expect_chunks, out_len) = wait_resp_meta(sock, target, ctx.req_id)?;
@@ -473,8 +445,8 @@ fn execute_single_request_attempt(
             expect_chunks, out_len, ctx.req_id);
 
 
-   // Phase 4: Wait for all RESP_CHUNKs
-   receive_resp_chunks(sock, target, ctx.req_id, expect_chunks)?;
+   // Phase 4: Wait for all RESP_CHUNKs and save encrypted image
+   receive_and_save_encrypted_image(sock, target, ctx.req_id, expect_chunks, out_len)?;
    ctx.state = RequestState::Completed;
 
 
@@ -664,15 +636,24 @@ fn wait_resp_meta(sock: &UdpSocket, target: SocketAddr, req_id: u32) -> Result<(
 }
 
 
-fn receive_resp_chunks(sock: &UdpSocket, target: SocketAddr, req_id: u32, expect_chunks: u32) -> Result<()> {
+/// Receive RESP_CHUNKs with ordered reassembly, save encrypted image, then extract and save metadata
+fn receive_and_save_encrypted_image(
+   sock: &UdpSocket,
+   target: SocketAddr,
+   req_id: u32,
+   expect_chunks: u32,
+   expected_size: usize,
+) -> Result<()> {
    if expect_chunks == 0 {
        return Ok(());
    }
 
-
    let deadline = Instant::now() + Duration::from_millis(TERTIARY_TIMEOUT_MS);
    let mut buf = [0u8; 65536];
    let mut received = 0u32;
+   
+   // Store chunks by sequence number
+   let mut chunks_map: HashMap<u32, Vec<u8>> = HashMap::with_capacity(expect_chunks as usize);
 
 
    while received < expect_chunks {
@@ -692,6 +673,14 @@ fn receive_resp_chunks(sock: &UdpSocket, target: SocketAddr, req_id: u32, expect
                    if rid != req_id {
                        continue;
                    }
+                   
+                   // Extract sequence number and payload
+                   let seq = u32::from_le_bytes(buf[5..9].try_into().unwrap());
+                   let payload = buf[9..n].to_vec();
+                   
+                   // Store by sequence number
+                   chunks_map.insert(seq, payload);
+                   
                    received += 1;
 
 
@@ -712,7 +701,120 @@ fn receive_resp_chunks(sock: &UdpSocket, target: SocketAddr, req_id: u32, expect
 
 
    println!("[RESPONSE] All {} chunks received (req_id={})", expect_chunks, req_id);
+   
+   // Reassemble chunks in sequence order
+   let mut encrypted_buffer = Vec::with_capacity(expected_size);
+   let mut missing_chunks = Vec::new();
+   
+   for seq in 0..expect_chunks {
+       if let Some(chunk_data) = chunks_map.get(&seq) {
+           encrypted_buffer.extend_from_slice(chunk_data);
+       } else {
+           missing_chunks.push(seq);
+       }
+   }
+   
+   if !missing_chunks.is_empty() {
+       bail!("Missing chunks {:?} in response", missing_chunks);
+   }
+   
+   println!("[RESPONSE] Chunks reassembled in order | req_id={} bytes={}", req_id, encrypted_buffer.len());
+   
+   // ============================================================================
+   // STEP 1: Save encrypted image to disk
+   // ============================================================================
+   let encrypted_path = format!("./client_test/req_{}_encrypted.png", req_id);
+   match fs::write(&encrypted_path, &encrypted_buffer) {
+       Ok(_) => {
+           println!("[CLIENT] Encrypted image saved: {} ({} bytes)", encrypted_path, encrypted_buffer.len());
+       }
+       Err(e) => {
+           eprintln!("[CLIENT] Failed to save encrypted image: {} | Error: {}", encrypted_path, e);
+           bail!("Failed to save encrypted image: {}", e);
+       }
+   }
+   
+   // ============================================================================
+   // STEP 2: Extract metadata from encrypted image
+   // ============================================================================
+   println!("[DECRYPT] Starting metadata extraction | req_id={}", req_id);
+   
+   let extracted_meta = extract_metadata_from_image(&encrypted_buffer, req_id)?;
+   
+   // ============================================================================
+   // STEP 3: Save extracted metadata to text file
+   // ============================================================================
+   let metadata_path = format!("./decrypted_data/req_{}_metadata.txt", req_id);
+   
+   // Create pretty-printed JSON string
+   let metadata_json = serde_json::to_string_pretty(&extracted_meta)
+       .context("Failed to serialize extracted metadata")?;
+   
+   match fs::write(&metadata_path, &metadata_json) {
+       Ok(_) => {
+           println!("[DECRYPT] Metadata saved: {}", metadata_path);
+           println!("[DECRYPT] Extracted metadata:");
+           println!("  Owner: {}", extracted_meta.owner);
+           println!("  Access List:");
+           for entry in &extracted_meta.allow {
+               println!("    - User: {}, Remaining Views: {}", entry.user, entry.remaining_views);
+           }
+       }
+       Err(e) => {
+           eprintln!("[DECRYPT] Failed to save metadata: {} | Error: {}", metadata_path, e);
+           bail!("Failed to save metadata: {}", e);
+       }
+   }
+   
    Ok(())
+}
+
+
+/// Extract metadata from encrypted image bytes
+fn extract_metadata_from_image(image_bytes: &[u8], req_id: u32) -> Result<ExtractedMeta> {
+   // Load image using the image crate
+   let img = image::load_from_memory(image_bytes)
+       .with_context(|| format!("Failed to load encrypted image for req_id={}", req_id))?;
+   
+   // Extract metadata using steganography
+   // NOTE: This uses the stego library's extract function
+   // The actual implementation depends on how you've structured the stego library
+   // Here we inline the extraction logic based on lib.rs
+   
+   let rgba = img.to_rgba8();
+   let mut bytes = Vec::new();
+   let mut cur: u8 = 0;
+   let mut bitpos = 0;
+   
+   const MAGIC: &[u8; 4] = b"SP2P";
+   
+   for y in 0..rgba.height() {
+       for x in 0..rgba.width() {
+           let p = rgba.get_pixel(x, y);
+           for c in 0..4 {
+               let bit = p[c] & 1;
+               cur |= bit << (bitpos as u8);
+               bitpos += 1;
+               if bitpos == 8 {
+                   bytes.push(cur);
+                   cur = 0;
+                   bitpos = 0;
+                   
+                   if bytes.len() >= 8 && &bytes[0..4] == MAGIC {
+                       let len = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+                       if bytes.len() >= 8 + len {
+                           let meta: ExtractedMeta = serde_json::from_slice(&bytes[8..8 + len])
+                               .context("Failed to deserialize extracted metadata")?;
+                           println!("[DECRYPT] Metadata extraction successful | req_id={}", req_id);
+                           return Ok(meta);
+                       }
+                   }
+               }
+           }
+       }
+   }
+   
+   bail!("No metadata found in encrypted image for req_id={}", req_id)
 }
 
 

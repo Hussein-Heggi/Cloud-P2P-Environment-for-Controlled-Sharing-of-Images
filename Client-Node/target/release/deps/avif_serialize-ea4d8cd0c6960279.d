@@ -1,0 +1,10 @@
+/home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Client-Node/target/release/deps/libavif_serialize-ea4d8cd0c6960279.rmeta: /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/lib.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/boxes.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/constants.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/writer.rs
+
+/home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Client-Node/target/release/deps/libavif_serialize-ea4d8cd0c6960279.rlib: /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/lib.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/boxes.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/constants.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/writer.rs
+
+/home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Client-Node/target/release/deps/avif_serialize-ea4d8cd0c6960279.d: /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/lib.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/boxes.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/constants.rs /home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/writer.rs
+
+/home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/lib.rs:
+/home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/boxes.rs:
+/home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/constants.rs:
+/home/g7/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/avif-serialize-0.8.6/src/writer.rs:
