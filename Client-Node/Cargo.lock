@@ -242,6 +242,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "rand",
  "serde",
  "serde_json",
  "socket2",

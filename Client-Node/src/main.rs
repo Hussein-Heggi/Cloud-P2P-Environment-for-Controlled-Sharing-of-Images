@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
+use rand::Rng;
 use serde::{Serialize, Deserialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -11,6 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+
 // NOTE: Import the stego library for metadata extraction
 // This assumes the stego library is available as a dependency
 // Adjust the import path based on your project structure
@@ -19,7 +21,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // For now, I'll inline the necessary structures and assume you'll link the library
 
 
-/// Wire constants (must match server)
+
+
+/// Wire constants (must match server)    |                                                   ^^^^^^^^^ the trait `SampleRange` is not implemented for `RangeInclusive<u64>`
 const REQ_META: u8 = 0;
 const REQ_CHUNK: u8 = 1;
 const RESP_META: u8 = 2;
@@ -28,8 +32,12 @@ const SELECT: u8 = 4;
 const ACCEPT: u8 = 5;
 
 
+
+
 /// Keep UDP payload safe for typical MTUs
 const MAX_DGRAM: usize = 1200;
+
+
 
 
 /// Timeout configurations
@@ -38,13 +46,19 @@ const SECONDARY_TIMEOUT_MS: u64 = 10000;   // REQ_META → RESP_META
 const TERTIARY_TIMEOUT_MS: u64 = 10000;    // RESP_META → all RESP_CHUNKs
 
 
+
+
 /// Retry configuration
 const MAX_ATTEMPTS: u32 = 3;
 const BASE_BACKOFF_MS: u64 = 100;
 
 
+
+
 /// Global sequence counter for request ID generation
 static SEQUENCE_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+
 
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -54,6 +68,8 @@ enum Operation {
    Grant,
    Revoke,
 }
+
+
 
 
 impl Operation {
@@ -76,6 +92,8 @@ impl Operation {
 }
 
 
+
+
 /// CLI for the client launcher and per-user child
 #[derive(Parser, Debug, Clone)]
 #[command(name = "client-node", version)]
@@ -85,9 +103,13 @@ struct Cli {
    peers: String,
 
 
+
+
    /// Total users (processes) to spawn. Set to 1 inside children.
    #[arg(long, default_value_t = 1)]
    processes: usize,
+
+
 
 
    /// Requests per user (per process), done with retry support.
@@ -95,9 +117,13 @@ struct Cli {
    requests_per_user: usize,
 
 
+
+
    /// Path to the image to send
    #[arg(long)]
    image: String,
+
+
 
 
    /// Operation to perform
@@ -105,9 +131,13 @@ struct Cli {
    op: Operation,
 
 
+
+
    /// Logical owner for policy
    #[arg(long, default_value = "owner")]
    owner: String,
+
+
 
 
    /// Optional "allow" CSV: user:views,user2:views
@@ -115,9 +145,13 @@ struct Cli {
    allow: String,
 
 
+
+
    /// Optional logical image id/name
    #[arg(long, default_value = "")]
    image_id: String,
+
+
 
 
    /// Optional explicit sender id (if 0, child's sender_id == proc_idx)
@@ -125,9 +159,27 @@ struct Cli {
    sender_id: u32,
 
 
+
+
    /// Pacing delay in microseconds per packet sent (0 = no pacing)
    #[arg(long, default_value_t = 150)]
    pacing_us: u64,
+
+
+
+
+   /// Average delay in milliseconds between requests (aggressive default: 1000ms)
+   #[arg(long, default_value_t = 1000)]
+   inter_request_delay_ms: u64,
+
+
+
+
+   /// Random jitter in milliseconds for inter-request delay (±jitter, aggressive default: 1000ms)
+   #[arg(long, default_value_t = 1000)]
+   jitter_ms: u64,
+
+
 
 
    /// INTERNAL: set by parent for child users
@@ -135,10 +187,14 @@ struct Cli {
    child: bool,
 
 
+
+
    /// INTERNAL: which user/process index is this (0-based)
    #[arg(long, default_value_t = 0, hide = true)]
    proc_idx: u16,
 }
+
+
 
 
 /// Policy structs for meta JSON (sending to server)
@@ -149,11 +205,15 @@ struct Allow {
 }
 
 
+
+
 #[derive(Serialize)]
 struct Adjust<'a> {
    user: &'a str,
    delta: i32,
 }
+
+
 
 
 #[derive(Serialize)]
@@ -163,10 +223,14 @@ struct Grant<'a> {
 }
 
 
+
+
 #[derive(Serialize)]
 struct Revoke<'a> {
    user: &'a str,
 }
+
+
 
 
 #[derive(Serialize)]
@@ -185,9 +249,12 @@ struct Meta<'a> {
 }
 
 
+
+
 // ============================================================================
 // Steganography structures for extraction (matches lib.rs)
 // ============================================================================
+
 
 /// AccessEntry from stego library (what we extract)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,12 +263,15 @@ struct AccessEntry {
    remaining_views: u32,
 }
 
+
 /// Meta from stego library (what we extract)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExtractedMeta {
    owner: String,
    allow: Vec<AccessEntry>,
 }
+
+
 
 
 /// Request state tracking
@@ -216,6 +286,8 @@ enum RequestState {
 }
 
 
+
+
 /// Context for a single request attempt
 struct RequestContext {
    req_id: u32,
@@ -223,6 +295,8 @@ struct RequestContext {
    state: RequestState,
    target: Option<SocketAddr>,
 }
+
+
 
 
 impl RequestContext {
@@ -236,12 +310,16 @@ impl RequestContext {
    }
 
 
+
+
    fn reset_for_retry(&mut self) {
        self.attempt += 1;
        self.state = RequestState::SelectSent;
        self.target = None;
    }
 }
+
+
 
 
 /// Request execution result types
@@ -254,9 +332,12 @@ enum RequestResult {
 }
 
 
+
+
 fn main() -> Result<()> {
    let cli = Cli::parse();
    let peers = parse_peers(&cli.peers)?;
+
 
    if !cli.child && cli.processes > 1 {
        // Parent: spawn N child processes (users)
@@ -269,6 +350,8 @@ fn main() -> Result<()> {
        run_client_process(&cli, &peers)
    }
 }
+
+
 
 
 fn spawn_child_processes(cli: &Cli) -> Result<()> {
@@ -294,6 +377,10 @@ fn spawn_child_processes(cli: &Cli) -> Result<()> {
        child_args.push(cli.image_id.clone());
        child_args.push("--pacing-us".into());
        child_args.push(cli.pacing_us.to_string());
+       child_args.push("--inter-request-delay-ms".into());
+       child_args.push(cli.inter_request_delay_ms.to_string());
+       child_args.push("--jitter-ms".into());
+       child_args.push(cli.jitter_ms.to_string());
        child_args.push("--child".into());
        child_args.push("--proc-idx".into());
        child_args.push(i.to_string());
@@ -303,10 +390,14 @@ fn spawn_child_processes(cli: &Cli) -> Result<()> {
        }
 
 
+
+
        let _ = Command::new(&exe).args(&child_args[1..]).spawn()?;
    }
    Ok(())
 }
+
+
 
 
 fn run_client_process(cli: &Cli, peers: &[SocketAddr]) -> Result<()> {
@@ -317,28 +408,50 @@ fn run_client_process(cli: &Cli, peers: &[SocketAddr]) -> Result<()> {
    };
 
 
+
+
    println!("[CLIENT] Process started: sender_id={}, requests={}", sender_id, cli.requests_per_user);
+
+
 
 
    let sock = UdpSocket::bind("0.0.0.0:0").context("bind local UDP")?;
    sock.set_read_timeout(Some(Duration::from_millis(100)))?;
-  
+ 
    let local_ip = get_local_ip()?;
    println!("[CLIENT] Local IP detected: {}", local_ip);
+
+
 
 
    let image_bytes = fs::read(&cli.image)
        .with_context(|| format!("read image file '{}'", cli.image))?;
 
 
+
+
    let allow_vec = parse_allow(&cli.allow);
+
+
+
+
+   // Statistics tracking
+   let mut total_requests = 0;
+   let mut successful_requests = 0;
+   let mut failed_requests = 0;
+   let mut total_attempts = 0;
+   let mut retry_counts: HashMap<u32, u32> = HashMap::new(); // req_id -> retry_count
+
+
 
 
    for i in 1..=cli.requests_per_user {
        println!("\n[CLIENT] ===== Starting Request {}/{} =====", i, cli.requests_per_user);
-      
+     
+       total_requests += 1;
        let req_id = generate_request_id(local_ip);
        let mut ctx = RequestContext::new(req_id);
+
 
        let result = execute_request_with_retry(
            cli,
@@ -350,21 +463,98 @@ fn run_client_process(cli: &Cli, peers: &[SocketAddr]) -> Result<()> {
            &allow_vec,
        );
 
+
+       // Track attempts made
+       let attempts_made = ctx.attempt;
+       total_attempts += attempts_made as usize;
+
+
        match result {
-           Ok(_) => println!("[CLIENT] ===== Request {}/{} COMPLETED =====\n", i, cli.requests_per_user),
+           Ok(_) => {
+               successful_requests += 1;
+               let retries = attempts_made - 1; // First attempt doesn't count as retry
+               retry_counts.insert(req_id, retries);
+               println!("[CLIENT] ===== Request {}/{} COMPLETED (attempts: {}) =====\n",
+                       i, cli.requests_per_user, attempts_made);
+           }
            Err(e) => {
-               eprintln!("[CLIENT] ===== Request {}/{} FAILED: {} =====\n", i, cli.requests_per_user, e);
+               failed_requests += 1;
+               retry_counts.insert(req_id, attempts_made - 1);
+               eprintln!("[CLIENT] ===== Request {}/{} FAILED after {} attempts: {} =====\n",
+                        i, cli.requests_per_user, attempts_made, e);
            }
        }
 
+
        if i < cli.requests_per_user {
-           thread::sleep(Duration::from_millis(100));
+           // Apply inter-request delay with random jitter
+           // Formula: delay = avg_delay ± random(0..jitter)
+           let base_delay = cli.inter_request_delay_ms;
+           let jitter = cli.jitter_ms;
+           
+           // Generate random value in range [0, jitter]
+           let random_offset = rand::thread_rng().gen_range(0..=jitter);
+           
+           // Randomly add or subtract jitter
+           let actual_delay = if rand::thread_rng().gen_bool(0.5) {
+               // Add jitter (max: base + jitter)
+               base_delay + random_offset
+           } else {
+               // Subtract jitter (min: base - jitter, but never negative)
+               base_delay.saturating_sub(random_offset)
+           };
+           
+           println!("[CLIENT] Inter-request delay: {}ms (base: {}ms, jitter: ±{}ms)",
+                    actual_delay, base_delay, jitter);
+           thread::sleep(Duration::from_millis(actual_delay));
        }
    }
 
-   println!("[CLIENT] All {} requests completed", cli.requests_per_user);
+
+   // Print final statistics
+   println!("\n╔══════════════════════════════════════════════════════════════╗");
+   println!("║         CLIENT PROCESS STATISTICS (Sender ID: {:>5})        ║", sender_id);
+   println!("╠══════════════════════════════════════════════════════════════╣");
+   println!("║ Total Requests:         {:>8}                            ║", total_requests);
+   println!("║ Successful:             {:>8}                            ║", successful_requests);
+   println!("║ Failed:                 {:>8}                            ║", failed_requests);
+   println!("║ Success Rate:           {:>7.1}%                           ║",
+            if total_requests > 0 { (successful_requests as f64 / total_requests as f64) * 100.0 } else { 0.0 });
+   println!("╠══════════════════════════════════════════════════════════════╣");
+   println!("║ Total Attempts Made:    {:>8}                            ║", total_attempts);
+   println!("║ Avg Attempts/Request:   {:>7.2}                            ║",
+            if total_requests > 0 { total_attempts as f64 / total_requests as f64 } else { 0.0 });
+   println!("╠══════════════════════════════════════════════════════════════╣");
+   
+   // Count retry distribution
+   let mut no_retries = 0;
+   let mut one_retry = 0;
+   let mut two_retries = 0;
+   let mut three_plus_retries = 0;
+   
+   for retries in retry_counts.values() {
+       match retries {
+           0 => no_retries += 1,
+           1 => one_retry += 1,
+           2 => two_retries += 1,
+           _ => three_plus_retries += 1,
+       }
+   }
+   
+   println!("║ RETRY BREAKDOWN:                                         ║");
+   println!("║   No retries (1st attempt):  {:>6} requests             ║", no_retries);
+   println!("║   1 retry (2nd attempt):     {:>6} requests             ║", one_retry);
+   println!("║   2 retries (3rd attempt):   {:>6} requests             ║", two_retries);
+   if three_plus_retries > 0 {
+       println!("║   3+ retries (failed):       {:>6} requests             ║", three_plus_retries);
+   }
+   println!("╚══════════════════════════════════════════════════════════════╝\n");
+
+
    Ok(())
 }
+
+
 
 
 fn execute_request_with_retry(
@@ -378,9 +568,10 @@ fn execute_request_with_retry(
 ) -> Result<()> {
    let mut last_error: Option<anyhow::Error> = None;
 
+
    while ctx.attempt <= MAX_ATTEMPTS {
        println!("[ATTEMPT] req_id={} attempt={}/{}", ctx.req_id, ctx.attempt, MAX_ATTEMPTS);
-      
+     
        match execute_single_attempt(cli, sock, peers, ctx, sender_id, image_bytes, allow_vec) {
            Ok(_) => {
                println!("[ATTEMPT] req_id={} succeeded on attempt {}", ctx.req_id, ctx.attempt);
@@ -388,9 +579,9 @@ fn execute_request_with_retry(
            }
            Err(e) => {
                last_error = Some(e);
-               println!("[ATTEMPT] req_id={} failed on attempt {}: {}", 
+               println!("[ATTEMPT] req_id={} failed on attempt {}: {}",
                        ctx.req_id, ctx.attempt, last_error.as_ref().unwrap());
-              
+             
                if ctx.attempt < MAX_ATTEMPTS {
                    let backoff = BASE_BACKOFF_MS * (1 << (ctx.attempt - 1));
                    println!("[RETRY] Waiting {}ms before retry...", backoff);
@@ -401,8 +592,11 @@ fn execute_request_with_retry(
        }
    }
 
+
    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All attempts failed")))
 }
+
+
 
 
 fn execute_single_attempt(
@@ -416,9 +610,11 @@ fn execute_single_attempt(
 ) -> Result<()> {
    let attempt_start = Instant::now();
 
+
    // Phase 1: SELECT → ACCEPT
    send_select(sock, peers, ctx.req_id, sender_id, cli.op.to_code(), image_bytes.len())?;
    ctx.state = RequestState::SelectSent;
+
 
    let target = match wait_first_accept(sock, ctx.req_id, Duration::from_millis(INITIAL_TIMEOUT_MS))? {
        Some(addr) => {
@@ -430,19 +626,24 @@ fn execute_single_attempt(
        }
    };
 
+
    ctx.target = Some(target);
    ctx.state = RequestState::AcceptReceived;
+
 
    // Phase 2: Upload image chunks
    upload_request(cli, sock, target, ctx.req_id, sender_id, image_bytes, allow_vec)?;
    ctx.state = RequestState::ChunksSent;
 
+
    // Phase 3: Wait for RESP_META
    let (expect_chunks, out_len) = wait_resp_meta(sock, target, ctx.req_id)?;
    ctx.state = RequestState::RespMetaReceived { expect_chunks };
-  
+ 
    println!("[RESPONSE] RESP_META received: {} chunks, {} bytes (req_id={})",
             expect_chunks, out_len, ctx.req_id);
+
+
 
 
    // Phase 4: Wait for all RESP_CHUNKs and save encrypted image
@@ -450,13 +651,19 @@ fn execute_single_attempt(
    ctx.state = RequestState::Completed;
 
 
+
+
    let total_time = attempt_start.elapsed();
    println!("[SUCCESS] req_id={} completed in {:.2}s (attempt={}, to={})",
             ctx.req_id, total_time.as_secs_f64(), ctx.attempt, target);
 
 
+
+
    Ok(())
 }
+
+
 
 
 fn send_select(
@@ -475,9 +682,13 @@ fn send_select(
    pkt.extend((image_len as u32).to_le_bytes());
 
 
+
+
    for &peer in peers {
        sock.send_to(&pkt, peer)?;
    }
+
+
 
 
    println!("[SELECT] Multicast to {} peers (req_id={})", peers.len(), req_id);
@@ -485,9 +696,13 @@ fn send_select(
 }
 
 
+
+
 fn wait_first_accept(sock: &UdpSocket, req_id: u32, timeout: Duration) -> Result<Option<SocketAddr>> {
    let deadline = Instant::now() + timeout;
    let mut buf = [0u8; 256];
+
+
 
 
    while Instant::now() < deadline {
@@ -509,8 +724,12 @@ fn wait_first_accept(sock: &UdpSocket, req_id: u32, timeout: Duration) -> Result
    }
 
 
+
+
    Ok(None)
 }
+
+
 
 
 fn upload_request(
@@ -523,13 +742,15 @@ fn upload_request(
    allow_vec: &[Allow],
 ) -> Result<()> {
    let now_ms = now_unix_ms();
-  
+ 
    let (adjust, grant, revoke) = match cli.op {
        Operation::AdjustViews => (Some(Adjust { user: "alice", delta: -1 }), None, None),
        Operation::Grant => (None, Some(Grant { user: "charlie", views: 5 }), None),
        Operation::Revoke => (None, None, Some(Revoke { user: "dave" })),
        Operation::Encrypt => (None, None, None),
    };
+
+
 
 
    let meta = Meta {
@@ -548,9 +769,13 @@ fn upload_request(
    let meta_json = serde_json::to_vec(&meta).context("serialize meta")?;
 
 
+
+
    // Send REQ_META
    let chunk_payload = MAX_DGRAM - (1 + 4 + 4);
    let total_chunks = ((image_bytes.len() + chunk_payload - 1) / chunk_payload) as u32;
+
+
 
 
    let mut meta_hdr = Vec::with_capacity(1 + 4 + 4 + 4 + 4 + meta_json.len());
@@ -563,12 +788,18 @@ fn upload_request(
    sock.send_to(&meta_hdr, target)?;
 
 
+
+
    println!("[UPLOAD] Starting {} chunks to {} (req_id={})", total_chunks, target, req_id);
+
+
 
 
    // Send REQ_CHUNKs with pacing
    let mut offset = 0usize;
    let mut seq_idx = 0u32;
+
+
 
 
    while offset < image_bytes.len() {
@@ -581,14 +812,20 @@ fn upload_request(
        sock.send_to(&pkt, target)?;
 
 
+
+
        if seq_idx % 1000 == 0 && seq_idx > 0 {
            println!("[UPLOAD] Progress: {}/{} chunks ({:.1}%)",
                     seq_idx, total_chunks, (seq_idx as f64 * 100.0) / total_chunks as f64);
        }
 
 
+
+
        offset += take;
        seq_idx += 1;
+
+
 
 
        if cli.pacing_us > 0 {
@@ -597,14 +834,20 @@ fn upload_request(
    }
 
 
+
+
    println!("[UPLOAD] All {} chunks sent (req_id={})", total_chunks, req_id);
    Ok(())
 }
 
 
+
+
 fn wait_resp_meta(sock: &UdpSocket, target: SocketAddr, req_id: u32) -> Result<(u32, usize)> {
    let deadline = Instant::now() + Duration::from_millis(SECONDARY_TIMEOUT_MS);
    let mut buf = [0u8; 65536];
+
+
 
 
    while Instant::now() < deadline {
@@ -632,8 +875,12 @@ fn wait_resp_meta(sock: &UdpSocket, target: SocketAddr, req_id: u32) -> Result<(
    }
 
 
+
+
    bail!("Timeout waiting for RESP_META (Secondary timeout)")
 }
+
+
 
 
 /// Receive RESP_CHUNKs with ordered reassembly, save encrypted image, then extract and save metadata
@@ -648,6 +895,7 @@ fn receive_and_save_encrypted_image(
        return Ok(());
    }
 
+
    let deadline = Instant::now() + Duration::from_millis(TERTIARY_TIMEOUT_MS);
    let mut buf = [0u8; 65536];
    let mut received = 0u32;
@@ -656,11 +904,15 @@ fn receive_and_save_encrypted_image(
    let mut chunks_map: HashMap<u32, Vec<u8>> = HashMap::with_capacity(expect_chunks as usize);
 
 
+
+
    while received < expect_chunks {
        if Instant::now() > deadline {
            bail!("Timeout waiting for RESP_CHUNKs: got {}/{} (Tertiary timeout)",
                  received, expect_chunks);
        }
+
+
 
 
        match sock.recv_from(&mut buf) {
@@ -684,6 +936,8 @@ fn receive_and_save_encrypted_image(
                    received += 1;
 
 
+
+
                    if received % 1000 == 0 && received < expect_chunks {
                        println!("[RESPONSE] Progress: {}/{} chunks ({:.1}%)",
                                 received, expect_chunks,
@@ -698,6 +952,8 @@ fn receive_and_save_encrypted_image(
            Err(e) => return Err(e.into()),
        }
    }
+
+
 
 
    println!("[RESPONSE] All {} chunks received (req_id={})", expect_chunks, req_id);
@@ -770,6 +1026,8 @@ fn receive_and_save_encrypted_image(
 }
 
 
+
+
 /// Extract metadata from encrypted image bytes
 fn extract_metadata_from_image(image_bytes: &[u8], req_id: u32) -> Result<ExtractedMeta> {
    // Load image using the image crate
@@ -818,9 +1076,11 @@ fn extract_metadata_from_image(image_bytes: &[u8], req_id: u32) -> Result<Extrac
 }
 
 
+
+
 fn generate_request_id(client_ip: IpAddr) -> u32 {
    let mut hasher = DefaultHasher::new();
-  
+ 
    client_ip.hash(&mut hasher);
    std::process::id().hash(&mut hasher);
    SystemTime::now()
@@ -829,9 +1089,11 @@ fn generate_request_id(client_ip: IpAddr) -> u32 {
        .as_nanos()
        .hash(&mut hasher);
    SEQUENCE_COUNTER.fetch_add(1, Ordering::SeqCst).hash(&mut hasher);
-  
+ 
    (hasher.finish() & 0xFFFFFFFF) as u32
 }
+
+
 
 
 fn get_local_ip() -> Result<IpAddr> {
@@ -841,6 +1103,8 @@ fn get_local_ip() -> Result<IpAddr> {
    let local = temp_sock.local_addr()?;
    Ok(local.ip())
 }
+
+
 
 
 fn parse_peers(s: &str) -> Result<Vec<SocketAddr>> {
@@ -860,6 +1124,8 @@ fn parse_peers(s: &str) -> Result<Vec<SocketAddr>> {
 }
 
 
+
+
 fn parse_allow(csv: &str) -> Vec<Allow> {
    csv.split(',')
        .filter(|s| !s.trim().is_empty())
@@ -871,6 +1137,8 @@ fn parse_allow(csv: &str) -> Vec<Allow> {
        })
        .collect()
 }
+
+
 
 
 fn now_unix_ms() -> u128 {
