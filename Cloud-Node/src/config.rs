@@ -30,8 +30,17 @@ pub struct Config {
     pub assign_broadcast_every_ms: u64,
 
     /// Lease duration for ASSIGN (ms)
-    #[arg(long, default_value_t = 1000000)]
+    #[arg(long, default_value_t = 8000)]
     pub assign_lease_ms: u32,
+
+    // -------- Load balancing --------
+    /// How often each server broadcasts its load (ms)
+    #[arg(long, default_value_t = 750)]
+    pub load_broadcast_every_ms: u64,
+
+    /// Minimum load difference (0.0-1.0) required to switch executors
+    #[arg(long, default_value_t = 0.05)]
+    pub executor_switch_threshold: f32,
 
     // -------- Failure simulation (re-enabled) --------
     /// Period between failures (seconds). 0 disables injection until set.
@@ -44,11 +53,18 @@ pub struct Config {
 }
 
 impl Config {
+    // Load calculation weights (CPU + RAM only, no queue)
+    pub const LOAD_CPU_WEIGHT: f32 = 0.75;
+    pub const LOAD_RAM_WEIGHT: f32 = 0.25;
+    
+    // Load data staleness timeout (ms)
+    pub const LOAD_STALE_TIMEOUT_MS: u128 = 2000;
+
     /// Service peers (client-facing UDP)
     pub fn service_peers() -> &'static [&'static str] {
         &[
             "10.40.61.79:8180",  // node 1
-            "10.40.58.169:8181", // node 2
+            "10.40.63.10:8181", // node 2
             "10.40.50.93:8183",  // node 3
         ]
     }
@@ -57,7 +73,7 @@ impl Config {
     pub fn election_peers() -> &'static [&'static str] {
         &[
             "10.40.61.79:8080",
-            "10.40.58.169:8081",
+            "10.40.63.10:8081",
             "10.40.50.93:8083",
         ]
     }
@@ -66,7 +82,7 @@ impl Config {
     pub fn assignment_peers() -> &'static [&'static str] {
         &[
             "10.40.61.79:8280",
-            "10.40.58.169:8281",
+            "10.40.63.10:8281",
             "10.40.50.93:8283",
         ]
     }
@@ -173,8 +189,12 @@ impl Config {
         }
     }
 
-    /// Static executor IP for this phase
-    pub fn static_executor_ip(&self) -> IpAddr {
-        IpAddr::V4(Ipv4Addr::new(10, 40, 61, 79))
+    /// Map node_id to IP address
+    pub fn node_id_to_ip(&self, node_id: u32) -> Option<IpAddr> {
+        if node_id < 1 || node_id > Self::service_peers().len() as u32 {
+            return None;
+        }
+        let idx = (node_id - 1) as usize;
+        Some(Self::parse_addr(Self::service_peers()[idx]).ip())
     }
 }
