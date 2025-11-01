@@ -21,7 +21,7 @@ pub struct Config {
     pub assign_bind: Option<String>,
 
     /// Pacing delay in microseconds per response packet (0 = no pacing)
-    #[arg(long, default_value_t = 150)]
+    #[arg(long, default_value_t = 2000)]
     pub pacing_us: u64,
 
     // -------- Assignment timing --------
