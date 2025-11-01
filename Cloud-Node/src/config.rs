@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "server", about = "Cloud P2P server")]

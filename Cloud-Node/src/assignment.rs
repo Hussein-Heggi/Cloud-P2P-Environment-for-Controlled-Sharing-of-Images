@@ -59,13 +59,41 @@ pub async fn run_assignment_channels(
     {
         let st = state.clone();
         let sock_tx = sock.clone();
-        tokio::spawn(async move { broadcast_assign_loop(st, sock_tx, cfg).await });
+        let cfg_assign = cfg.clone();
+        tokio::spawn(async move { broadcast_assign_loop(st, sock_tx, cfg_assign).await });
+    }
+
+    // FORWARD_REQUEST receiver (handles forwarded requests with large data)
+    {
+        let st = state.clone();
+        let sock_fwd = sock.clone();
+        let cfg_fwd = cfg.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65536]; // Large buffer for forward requests
+            loop {
+                match sock_fwd.recv_from(&mut buf).await {
+                    Ok((n, _from)) => {
+                        if n >= 1 && buf[0] == crate::history::FORWARD_REQUEST {
+                            crate::history::handle_forward_request(
+                                st.clone(),
+                                sock_fwd.clone(),
+                                cfg_fwd.clone(),
+                                &buf[..n],
+                            ).await;
+                        }
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                }
+            }
+        });
     }
 
     Ok(())
 }
 
-async fn recv_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Config) {
+async fn recv_assign_loop(state: SharedState, sock: Arc<UdpSocket>, _cfg: Config) {
     let mut buf = [0u8; 256];
     let mut last_log = Instant::now() - Duration::from_secs(12);
 
@@ -128,6 +156,19 @@ async fn recv_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Config)
                         }
 
                         debug!(server_id, load_score, "LOAD_REPORT received");
+                    }
+                    crate::history::HISTORY_UPDATE => {
+                        crate::history::handle_history_update(state.clone(), &buf[..n]).await;
+                    }
+                    crate::history::TABLE_SYNC => {
+                        // Only leader processes TABLE_SYNC
+                        let is_leader = { state.read().await.is_leader };
+                        if is_leader {
+                            crate::history::handle_table_sync(state.clone(), &buf[..n]).await;
+                        }
+                    }
+                    crate::history::TABLE_UPDATE => {
+                        crate::history::handle_table_update(state.clone(), &buf[..n]).await;
                     }
                     _ => {
                         // Unknown message type

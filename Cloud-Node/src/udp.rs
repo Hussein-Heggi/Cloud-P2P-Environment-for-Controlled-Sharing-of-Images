@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::Config,
     state::{ServerState, SharedState},
+    history,
 };
 
 const REQ_META: u8 = 0;
@@ -213,6 +214,105 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                     );
                     continue;
                 }
+
+                // ============================================================
+                // HISTORY CHECK: Check if this request was already completed
+                // ============================================================
+                let history_check = {
+                    let s = state.read().await;
+                    s.history.get(&req_id).cloned()
+                };
+
+                if let Some(record) = history_check {
+                    println!(
+                        "[EXECUTOR] HISTORY HIT | req_id={} was completed by {}",
+                        req_id, record.executor_node
+                    );
+
+                    // Check if self was the original executor
+                    let self_ip = my_client_ip;
+                    if record.executor_node == self_ip {
+                        // Self was executor - load saved image and resend
+                        println!(
+                            "[EXECUTOR] Loading saved image | req_id={} path={:?}",
+                            req_id, record.path_to_output_image
+                        );
+
+                        if let Some(path) = record.path_to_output_image {
+                            match tokio::fs::read(&path).await {
+                                Ok(encrypted_png) => {
+                                    println!(
+                                        "[EXECUTOR] Saved image loaded | req_id={} size={}",
+                                        req_id, encrypted_png.len()
+                                    );
+
+                                    // Send response to client (PRIORITIZE CLIENT RESPONSE)
+                                    send_response_to_client(
+                                        &sock,
+                                        peer,
+                                        req_id,
+                                        &encrypted_png,
+                                        pacing_us,
+                                    ).await;
+
+                                    {
+                                        let mut s = state.write().await;
+                                        s.requests_served = s.requests_served.saturating_add(1);
+                                    }
+
+                                    println!(
+                                        "[EXECUTOR] Response resent from history | req_id={}",
+                                        req_id
+                                    );
+                                    continue; // Done, don't re-process
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "[EXECUTOR] Failed to read saved image | req_id={} path={} error={}",
+                                        req_id, path, e
+                                    );
+                                    warn!(req_id, ?path, error=%e, "Failed to read saved image");
+                                    // Fall through to re-process
+                                }
+                            }
+                        } else {
+                            eprintln!(
+                                "[EXECUTOR] History record missing path | req_id={}",
+                                req_id
+                            );
+                            // Fall through to re-process
+                        }
+                    } else {
+                        // Different executor - forward request
+                        println!(
+                            "[EXECUTOR] Forwarding to original executor | req_id={} original_executor={}",
+                            req_id, record.executor_node
+                        );
+
+                        // Capture full request data for forwarding
+                        let forward_data = buf[..n].to_vec();
+
+                        // Forward to original executor (fire-and-forget)
+                        history::send_forward_request(
+                            &sock,
+                            &cfg,
+                            record.executor_node,
+                            req_id,
+                            peer,
+                            &forward_data,
+                        ).await;
+
+                        println!(
+                            "[EXECUTOR] Request forwarded | req_id={} to {}",
+                            req_id, record.executor_node
+                        );
+                        continue; // Done, don't process locally
+                    }
+                }
+
+                // ============================================================
+                // NOT IN HISTORY - Process normally
+                // ============================================================
 
                 // Extract metadata JSON from packet
                 let meta_json = if meta_bytes > 0 && n >= HDR_META + meta_bytes {
@@ -440,6 +540,76 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
                             peer, req_id, out_len, total_out_chunks
                         );
                         debug!(%peer, req_id, out_len, chunks=%total_out_chunks, "RESP echoed (executor)");
+
+                        // ============================================================
+                        // HISTORY UPDATE: Save image, update history, multicast
+                        // IMPORTANT: This happens AFTER client response is sent (priority)
+                        // ============================================================
+                        let self_ip = my_client_ip;
+                        let timestamp = now_ms();
+                        
+                        // Create directory if not exists
+                        let _ = tokio::fs::create_dir_all("./server_images").await;
+                        
+                        // Save image to disk
+                        let image_path = format!("./server_images/req_{}.png", req_id);
+                        match tokio::fs::write(&image_path, &encrypted_png).await {
+                            Ok(_) => {
+                                println!(
+                                    "[EXECUTOR] Image saved to disk | req_id={} path={}",
+                                    req_id, image_path
+                                );
+
+                                // Update local history table
+                                {
+                                    use crate::state::HistoryRecord;
+                                    let mut s = state.write().await;
+                                    s.history.insert(
+                                        req_id,
+                                        HistoryRecord {
+                                            req_id,
+                                            executor_node: self_ip,
+                                            path_to_output_image: Some(image_path.clone()),
+                                            timestamp,
+                                        },
+                                    );
+                                }
+
+                                println!(
+                                    "[EXECUTOR] History updated | req_id={} executor={}",
+                                    req_id, self_ip
+                                );
+
+                                // Multicast HISTORY_UPDATE to all peers
+                                // Get assignment socket from somewhere - we'll need to pass it
+                                // For now, we'll spawn a task that does this
+                                let cfg_clone = cfg.clone();
+                                tokio::spawn(async move {
+                                    // Create temporary socket for multicast
+                                    if let Ok(temp_sock) = UdpSocket::bind("0.0.0.0:0").await {
+                                        history::multicast_history_update(
+                                            &temp_sock,
+                                            &cfg_clone,
+                                            req_id,
+                                            self_ip,
+                                            timestamp,
+                                        ).await;
+                                        println!(
+                                            "[EXECUTOR] HISTORY_UPDATE multicast sent | req_id={}",
+                                            req_id
+                                        );
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[EXECUTOR] Failed to save image | req_id={} path={} error={}",
+                                    req_id, image_path, e
+                                );
+                                warn!(req_id, ?image_path, error=%e, "Failed to save image to disk");
+                            }
+                        }
+
                         ctxs.remove(&req_id);
                     }
                 } else {
@@ -458,4 +628,57 @@ pub async fn run_udp_server(state: SharedState, cfg: Config) -> anyhow::Result<(
             }
         }
     }
+}
+
+/// Helper function to send response packets to client with pacing
+/// Used for both new responses and history-based responses
+async fn send_response_to_client(
+    sock: &UdpSocket,
+    client_addr: SocketAddr,
+    req_id: u32,
+    data: &[u8],
+    pacing_us: u64,
+) {
+    let out_len = data.len();
+    let payload_cap = MAX_DGRAM - (1 + 4 + 4); // RESP_CHUNK header space
+    let total_out_chunks = ((out_len + payload_cap - 1) / payload_cap) as u32;
+
+    // RESP_META: [2][req_id][total_chunks][out_len]
+    let mut hdr = [0u8; 1 + 4 + 4 + 4];
+    hdr[0] = RESP_META;
+    hdr[1..5].copy_from_slice(&req_id.to_le_bytes());
+    hdr[5..9].copy_from_slice(&total_out_chunks.to_le_bytes());
+    hdr[9..13].copy_from_slice(&(out_len as u32).to_le_bytes());
+    let _ = sock.send_to(&hdr, client_addr).await;
+
+    println!(
+        "[EXECUTOR] RESP_META sent | req_id={} total_chunks={} out_len={}",
+        req_id, total_out_chunks, out_len
+    );
+
+    // RESP_CHUNK(s) - with configurable pacing
+    let mut off = 0usize;
+    let mut seq_out = 0u32;
+    while off < out_len {
+        let take = (out_len - off).min(payload_cap);
+        let mut pkt = Vec::with_capacity(1 + 4 + 4 + take);
+        pkt.push(RESP_CHUNK);
+        pkt.extend(req_id.to_le_bytes());
+        pkt.extend(seq_out.to_le_bytes());
+        pkt.extend_from_slice(&data[off..off + take]);
+        let _ = sock.send_to(&pkt, client_addr).await;
+        
+        off += take;
+        seq_out += 1;
+        
+        // Configurable pacing to prevent client buffer overflow
+        if pacing_us > 0 {
+            std::thread::sleep(Duration::from_micros(pacing_us));
+        }
+    }
+
+    println!(
+        "[EXECUTOR] RESP echoed to {} | req_id={} out_len={} chunks={}",
+        client_addr, req_id, out_len, total_out_chunks
+    );
 }

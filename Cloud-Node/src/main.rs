@@ -9,6 +9,7 @@ mod assignment;
 mod config;
 mod election;
 mod failure;
+mod history;
 mod state;
 mod stego_service;
 mod udp;
@@ -93,6 +94,39 @@ async fn main() -> anyhow::Result<()> {
                 let mut s = sys_refresh.lock().await;
                 s.refresh_cpu();
                 s.refresh_memory();
+            }
+        });
+    }
+
+    // History table cleanup (every 5 seconds)
+    {
+        let st = state.clone();
+        let cfg2 = cfg.clone();
+        tokio::spawn(async move {
+            history::run_cleanup_task(st, cfg2).await;
+        });
+    }
+
+    // History table sync to leader (every 12 seconds, non-leader nodes)
+    {
+        let st = state.clone();
+        let cfg2 = cfg.clone();
+        tokio::spawn(async move {
+            // Create a temporary socket for sending sync messages
+            if let Ok(temp_sock) = tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+                history::run_sync_to_leader_task(st, Arc::new(temp_sock), cfg2).await;
+            }
+        });
+    }
+
+    // History table sync by leader (every 15 seconds, leader only)
+    {
+        let st = state.clone();
+        let cfg2 = cfg.clone();
+        tokio::spawn(async move {
+            // Create a temporary socket for broadcasting
+            if let Ok(temp_sock) = tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+                history::run_leader_sync_task(st, Arc::new(temp_sock), cfg2).await;
             }
         });
     }
