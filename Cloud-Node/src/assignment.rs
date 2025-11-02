@@ -1,4 +1,4 @@
-use crate::{config::Config, state::{SharedState, LoadInfo}};
+use crate::{config::Config, epoch, state::{SharedState, LoadInfo}};
 use std::{
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
@@ -6,7 +6,7 @@ use std::{
 };
 use sysinfo::System;
 use tokio::net::UdpSocket;
-use tokio::time::{interval, sleep};
+use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 /// ASSIGN (type=6): [u8 ty=6][u32 leader_id][u32 lease_ms][u32 ipv4_be]
@@ -44,7 +44,7 @@ pub async fn run_assignment_channels(
         tokio::spawn(async move { recv_assign_loop(st, sock_rx, cfg_rx).await });
     }
 
-    // Load broadcaster (all servers)
+    // Load broadcaster (all servers) - TIER 1 CRITICAL
     {
         let st = state.clone();
         let sock_load = sock.clone();
@@ -55,7 +55,7 @@ pub async fn run_assignment_channels(
         });
     }
 
-    // Periodic ASSIGN broadcaster (leader only)
+    // Periodic ASSIGN broadcaster (leader only) - TIER 1 CRITICAL
     {
         let st = state.clone();
         let sock_tx = sock.clone();
@@ -198,17 +198,19 @@ fn calculate_own_load(sys: &System) -> f32 {
     load.clamp(0.0, 1.0)
 }
 
+/// TIER 1 CRITICAL: Epoch-aligned load broadcasting
+/// All servers broadcast their load at synchronized intervals
 async fn broadcast_load_loop(
     state: SharedState,
     sock: Arc<UdpSocket>,
     cfg: Config,
     sys: Arc<tokio::sync::Mutex<System>>,
 ) {
-    let mut tick = interval(Duration::from_millis(cfg.load_broadcast_every_ms));
     let mut last_log = Instant::now() - Duration::from_secs(12);
 
     loop {
-        tick.tick().await;
+        // EPOCH-ALIGNED SLEEP (Tier 1: 5ms precision)
+        epoch::sleep_until_next_aligned_tick_t1(cfg.load_broadcast_every_ms, "load_broadcast").await;
 
         // Don't broadcast if in failure mode
         let (ignoring, node_id) = {
@@ -241,8 +243,12 @@ async fn broadcast_load_loop(
 
         // Log at most once every ~12 seconds
         if last_log.elapsed() >= Duration::from_secs(12) {
-            println!("[LOAD] node_id={} load={:.3}", node_id, load_score);
-            debug!(node_id, load_score, "LOAD broadcast sent");
+            let epoch_offset = epoch::epoch_offset_ms();
+            println!(
+                "[LOAD] node_id={} load={:.3} epoch_offset={}ms",
+                node_id, load_score, epoch_offset
+            );
+            debug!(node_id, load_score, epoch_offset, "LOAD broadcast sent (epoch-aligned)");
             last_log = Instant::now();
         }
     }
@@ -299,12 +305,14 @@ fn select_best_executor(
     Some(best.0)
 }
 
+/// TIER 1 CRITICAL: Epoch-aligned assignment broadcasting
+/// Leader broadcasts executor assignments at synchronized intervals
 async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Config) {
-    let mut tick = interval(Duration::from_millis(cfg.assign_broadcast_every_ms));
     let mut last_log = Instant::now() - Duration::from_secs(12);
 
     loop {
-        tick.tick().await;
+        // EPOCH-ALIGNED SLEEP (Tier 1: 5ms precision)
+        epoch::sleep_until_next_aligned_tick_t1(cfg.assign_broadcast_every_ms, "assign_broadcast").await;
 
         // Only broadcast if I'm leader
         let is_leader = { state.read().await.is_leader };
@@ -388,10 +396,12 @@ async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Co
                     .collect()
             };
 
+            let epoch_offset = epoch::epoch_offset_ms();
             println!(
-                "[ASSIGN] executor=node_{} lease={}ms | loads: {}",
+                "[ASSIGN] executor=node_{} lease={}ms epoch_offset={}ms | loads: {}",
                 executor_id,
                 lease_ms,
+                epoch_offset,
                 load_info.join(" ")
             );
             info!(
@@ -399,9 +409,13 @@ async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Co
                 executor_id,
                 ?exec_ip,
                 lease_ms,
-                "ASSIGN broadcast sent with load-based selection"
+                epoch_offset,
+                "ASSIGN broadcast sent with load-based selection (epoch-aligned)"
             );
             last_log = Instant::now();
         }
     }
 }
+
+
+

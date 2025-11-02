@@ -44,11 +44,11 @@ pub struct Config {
 
     // -------- Failure simulation (re-enabled) --------
     /// Period between failures (seconds). 0 disables injection until set.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 40)]
     pub fail_every_secs: u64,
 
     /// Duration of each failure window (seconds). 0 disables injection until set.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 15)]
     pub fail_duration_secs: u64,
 }
 
@@ -64,8 +64,8 @@ impl Config {
     pub fn service_peers() -> &'static [&'static str] {
         &[
             "10.40.61.79:8180",  // node 1
-            "10.40.63.10:8181", // node 2
-            "10.40.50.93:8183",  // node 3
+            "10.40.58.169:8181", // node 2
+            "10.40.63.10:8183",  // node 3
         ]
     }
 
@@ -73,8 +73,8 @@ impl Config {
     pub fn election_peers() -> &'static [&'static str] {
         &[
             "10.40.61.79:8080",
-            "10.40.63.10:8081",
-            "10.40.50.93:8083",
+            "10.40.58.169:8081",
+            "10.40.63.10:8083",
         ]
     }
 
@@ -82,8 +82,8 @@ impl Config {
     pub fn assignment_peers() -> &'static [&'static str] {
         &[
             "10.40.61.79:8280",
-            "10.40.63.10:8281",
-            "10.40.50.93:8283",
+            "10.40.58.169:8281",
+            "10.40.63.10:8283",
         ]
     }
 

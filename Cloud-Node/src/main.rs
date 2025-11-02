@@ -2,12 +2,13 @@ use clap::Parser;
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::{watch, RwLock};
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 use tracing::info;
 
 mod assignment;
 mod config;
 mod election;
+mod epoch;
 mod failure;
 mod history;
 mod state;
@@ -30,6 +31,10 @@ async fn main() -> anyhow::Result<()> {
     let cfg = config::Config::parse();
     cfg.validate();
 
+    // Initialize global epoch FIRST - all servers will align to nearest second boundary
+    epoch::init_epoch();
+    println!("[MAIN] Epoch initialized, starting server node_id={}", cfg.node_id);
+
     // Shared state
     let state: state::SharedState = Arc::new(RwLock::new(ServerState::new(cfg.node_id)));
 
@@ -48,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Failure simulation
+    // Failure simulation (stays independent per your requirements)
     {
         let st = state.clone();
         let cfg2 = cfg.clone();
@@ -74,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Assignment channels (with load balancing)
+    // Assignment channels (with load balancing) - TIER 1 CRITICAL
     {
         let st = state.clone();
         let cfg2 = cfg.clone();
@@ -84,13 +89,14 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // System stats refresher (ensures CPU averages are accurate)
+    // System stats refresher (ensures CPU averages are accurate) - TIER 1
     {
         let sys_refresh = sys.clone();
         tokio::spawn(async move {
-            let mut tick = interval(Duration::from_millis(500));
             loop {
-                tick.tick().await;
+                // EPOCH-ALIGNED SLEEP (Tier 1: 5ms precision)
+                epoch::sleep_until_next_aligned_tick_t1(500, "sys_stats_refresh").await;
+                
                 let mut s = sys_refresh.lock().await;
                 s.refresh_cpu();
                 s.refresh_memory();
@@ -98,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // History table cleanup (every 5 seconds)
+    // History table cleanup (every 5 seconds) - TIER 2
     {
         let st = state.clone();
         let cfg2 = cfg.clone();
@@ -107,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // History table sync to leader (every 12 seconds, non-leader nodes)
+    // History table sync to leader (every 12 seconds, non-leader nodes) - TIER 2
     {
         let st = state.clone();
         let cfg2 = cfg.clone();
@@ -119,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // History table sync by leader (every 15 seconds, leader only)
+    // History table sync by leader (every 15 seconds, leader only) - TIER 2
     {
         let st = state.clone();
         let cfg2 = cfg.clone();
@@ -131,40 +137,45 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Periodic metrics printer (every 10s)
+    // Periodic metrics printer (every 10s) - TIER 2
     {
         let st = state.clone();
         tokio::spawn(async move {
-            let mut tick = interval(Duration::from_secs(10));
             loop {
-                tick.tick().await;
+                // EPOCH-ALIGNED SLEEP (Tier 2: 100ms precision)
+                epoch::sleep_until_next_aligned_tick_t2(10000, "metrics_printer").await;
+                
                 let (rec, srv) = {
                     let s = st.read().await;
                     (s.requests_received, s.requests_served)
                 };
+                let epoch_offset = epoch::epoch_offset_ms();
                 println!(
-                    "[METRICS] requests_received={} requests_served={}",
-                    rec, srv
+                    "[METRICS] requests_received={} requests_served={} epoch_offset={}ms",
+                    rec, srv, epoch_offset
                 );
                 info!(
                     requests_received = rec,
                     requests_served = srv,
-                    "metrics"
+                    epoch_offset,
+                    "metrics (epoch-aligned)"
                 );
             }
         });
     }
 
-    // Periodic history table printer (every 10s)
+    // Periodic history table printer (every 10s) - TIER 2
     {
         let st = state.clone();
         tokio::spawn(async move {
-            let mut tick = interval(Duration::from_secs(10));
             loop {
-                tick.tick().await;
-                let s = st.read().await;
+                // EPOCH-ALIGNED SLEEP (Tier 2: 100ms precision)
+                epoch::sleep_until_next_aligned_tick_t2(10000, "history_printer").await;
                 
-                println!("[HISTORY] Table has {} entries:", s.history.len());
+                let s = st.read().await;
+                let epoch_offset = epoch::epoch_offset_ms();
+                
+                println!("[HISTORY] Table has {} entries (epoch_offset={}ms):", s.history.len(), epoch_offset);
                 if s.history.is_empty() {
                     println!("  (empty)");
                 } else {
@@ -190,4 +201,5 @@ async fn main() -> anyhow::Result<()> {
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
+
 

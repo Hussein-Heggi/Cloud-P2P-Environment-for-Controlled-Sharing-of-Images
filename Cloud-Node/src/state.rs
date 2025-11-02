@@ -6,8 +6,8 @@ use tokio::sync::RwLock;
 pub struct HistoryRecord {
     pub req_id: u32,
     pub executor_node: IpAddr,
-    pub path_to_output_image: Option<String>, // Local path on executor, None on other nodes
-    pub timestamp: u128, // Completion time in milliseconds (unix epoch)
+    pub path_to_output_image: Option<String>, // None = in-progress, Some = completed
+    pub timestamp: u128, // Completion time in milliseconds (0 = in-progress)
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +35,8 @@ pub struct ServerState {
 
     // ---- History table for fault tolerance ----
     pub history: HashMap<u32, HistoryRecord>,     // req_id -> history record
+                                                   // path_to_output_image: None = in-progress
+                                                   // path_to_output_image: Some = completed
 
     // ---- Metrics ----
     pub requests_received: u64, // count of accepted REQ_META (one per request)

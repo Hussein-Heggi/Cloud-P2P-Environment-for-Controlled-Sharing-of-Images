@@ -1,11 +1,11 @@
-use crate::{config::Config, state::SharedState};
+use crate::{config::Config, epoch, state::SharedState};
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::net::UdpSocket;
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Message types for history table
@@ -231,13 +231,12 @@ async fn send_response_to_client(
     }
 }
 
-/// Periodic cleanup task - runs every 5 seconds
+/// TIER 2: Periodic cleanup task - runs every 5 seconds (epoch-aligned)
 /// Deletes history records older than 5 seconds and associated image files
 pub async fn run_cleanup_task(state: SharedState, cfg: Config) {
-    let mut tick = interval(Duration::from_secs(5));
-
     loop {
-        tick.tick().await;
+        // EPOCH-ALIGNED SLEEP (Tier 2: 100ms precision)
+        epoch::sleep_until_next_aligned_tick_t2(5000, "history_cleanup").await;
 
         let now = now_ms();
         let mut to_delete = Vec::new();
@@ -274,21 +273,25 @@ pub async fn run_cleanup_task(state: SharedState, cfg: Config) {
                 s.history.remove(&req_id);
             }
 
-            info!(deleted_count=delete_count, "Cleanup: removed old history records");
+            let epoch_offset = epoch::epoch_offset_ms();
+            info!(
+                deleted_count=delete_count,
+                epoch_offset,
+                "Cleanup: removed old history records (epoch-aligned)"
+            );
         }
     }
 }
 
-/// Periodic sync task - sends local table to leader every 10-15 seconds
+/// TIER 2: Periodic sync task - sends local table to leader every 12 seconds (epoch-aligned)
 pub async fn run_sync_to_leader_task(
     state: SharedState,
     sock: Arc<UdpSocket>,
     cfg: Config,
 ) {
-    let mut tick = interval(Duration::from_millis(12000)); // 12 seconds
-
     loop {
-        tick.tick().await;
+        // EPOCH-ALIGNED SLEEP (Tier 2: 100ms precision)
+        epoch::sleep_until_next_aligned_tick_t2(12000, "sync_to_leader").await;
 
         let (is_leader, ignoring, node_id, records) = {
             let s = state.read().await;
@@ -332,7 +335,14 @@ pub async fn run_sync_to_leader_task(
             for peer in cfg.assignment_peer_addrs() {
                 if peer.ip() == leader_ip {
                     let _ = sock.send_to(&pkt, peer).await;
-                    debug!(node_id, leader_id, records_count=records.len(), "TABLE_SYNC sent to leader");
+                    let epoch_offset = epoch::epoch_offset_ms();
+                    debug!(
+                        node_id,
+                        leader_id,
+                        records_count=records.len(),
+                        epoch_offset,
+                        "TABLE_SYNC sent to leader (epoch-aligned)"
+                    );
                     break;
                 }
             }
@@ -340,17 +350,16 @@ pub async fn run_sync_to_leader_task(
     }
 }
 
-/// Leader sync task - receives tables, merges, and broadcasts
+/// TIER 2: Leader sync task - receives tables, merges, and broadcasts every 15 seconds (epoch-aligned)
 /// Only runs when this node is leader
 pub async fn run_leader_sync_task(
     state: SharedState,
     sock: Arc<UdpSocket>,
     cfg: Config,
 ) {
-    let mut tick = interval(Duration::from_millis(15000)); // 15 seconds
-
     loop {
-        tick.tick().await;
+        // EPOCH-ALIGNED SLEEP (Tier 2: 100ms precision)
+        epoch::sleep_until_next_aligned_tick_t2(15000, "leader_sync_broadcast").await;
 
         let is_leader = { state.read().await.is_leader };
         if !is_leader {
@@ -388,7 +397,12 @@ pub async fn run_leader_sync_task(
             let _ = sock.send_to(&pkt, peer).await;
         }
 
-        info!(records_count=records.len(), "TABLE_UPDATE broadcast by leader");
+        let epoch_offset = epoch::epoch_offset_ms();
+        info!(
+            records_count=records.len(),
+            epoch_offset,
+            "TABLE_UPDATE broadcast by leader (epoch-aligned)"
+        );
     }
 }
 
@@ -512,3 +526,5 @@ fn get_node_id_from_ip(ip: IpAddr) -> u32 {
     }
     0 // Unknown
 }
+
+
