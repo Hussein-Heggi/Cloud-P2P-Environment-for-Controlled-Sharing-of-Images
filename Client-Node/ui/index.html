@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cloud-P2P Client</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="./styles.css" rel="stylesheet" />
+</head>
+<body>
+  <div id="app" class="app">
+
+    <!-- Gradient background -->
+    <div id="bg" class="bg"></div>
+
+    <div class="card" id="loginCard">
+      <h1>Client Login</h1>
+      <form id="loginForm">
+        <label>Username</label>
+        <input type="text" id="username" required placeholder="demo"/>
+
+        <label>Password</label>
+        <input type="password" id="password" required placeholder="••••••••"/>
+
+        <button type="submit">Log in</button>
+      </form>
+    </div>
+
+    <div class="card hidden" id="uploadCard">
+      <h1>Encrypt & Send</h1>
+      <form id="runForm">
+        <label>PNG Image</label>
+        <input type="file" id="image" accept="image/png" required />
+
+        <label>Metadata (allow)</label>
+        <input type="text" id="metadata" required placeholder="bob:5 or alice:3,bob:2" />
+
+        <div class="actions">
+          <button type="submit" id="runBtn">Run Client</button>
+        </div>
+      </form>
+
+      <div id="runStatus" class="status"></div>
+    </div>
+
+    <div class="card hidden" id="resultCard">
+      <div class="result-header">
+        <h1>Result</h1>
+        <button id="backBtn" class="secondary">← Back</button>
+      </div>
+
+      <div id="resultImageWrap" class="img-wrap">
+        <!-- Returned image (blurred in CSS) -->
+        <img id="resultImage" alt="Encrypted image" />
+      </div>
+
+      <div class="meta">
+        <h2>Decrypted / Metadata Files</h2>
+        <div id="decryptedList"></div>
+      </div>
+    </div>
+
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

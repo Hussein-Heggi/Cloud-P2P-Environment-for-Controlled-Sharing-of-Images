@@ -1,0 +1,9 @@
+{
+  "owner": "owner",
+  "allow": [
+    {
+      "user": "bob",
+      "remaining_views": 5
+    }
+  ]
+}

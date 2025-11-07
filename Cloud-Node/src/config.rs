@@ -44,7 +44,7 @@ pub struct Config {
 
     // -------- Failure simulation (re-enabled) --------
     /// Period between failures (seconds). 0 disables injection until set.
-    #[arg(long, default_value_t = 40)]
+    #[arg(long, default_value_t = 0)]
     pub fail_every_secs: u64,
 
     /// Duration of each failure window (seconds). 0 disables injection until set.
