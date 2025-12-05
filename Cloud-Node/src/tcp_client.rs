@@ -11,7 +11,8 @@ use tracing::{info, warn};
 use crate::{
     client_protocol,
     config::Config,
-    state::SharedState,
+    owner_image,
+    state::{SharedState, StoredImageAssets},
 };
 
 /// Run TCP server for client connections
@@ -162,6 +163,16 @@ async fn route_client_message(
         x if x == client_protocol::APPROVE_VIEW => {
             info!(%peer_addr, len=payload.len(), "Received APPROVE_VIEW from client");
             handle_approve_view_tcp(state, &cfg, stream, peer_addr, payload).await
+        }
+
+        x if x == client_protocol::OWNER_IMAGE_META => {
+            info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_META from client");
+            handle_owner_image_meta(state, payload).await
+        }
+
+        x if x == client_protocol::OWNER_IMAGE_CHUNK => {
+            info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_CHUNK from client");
+            handle_owner_image_chunk(state, stream, peer_addr, payload).await
         }
 
         x if x == client_protocol::SYNC_USAGE => {
@@ -412,7 +423,7 @@ async fn handle_deny_view_tcp(
 }
 
 async fn handle_approve_view_tcp(
-    _state: SharedState,
+    state: SharedState,
     _cfg: &Config,
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
@@ -427,10 +438,43 @@ async fn handle_approve_view_tcp(
 
     println!("[APPROVE_VIEW] req_id={} from {}", req_id, peer_addr);
 
-    // TODO: Find pending request and send APPROVED to viewer
-    // For now, just acknowledge
-    let mut s = stream.lock().await;
-    let _ = s;
+    // For now, pick the first ready image for this owner and send it back as IMAGE_CHUNK
+    let (owner, image_name, assets) = {
+        let s = state.read().await;
+        // naive: match peer IP string to client_ip in dos_clients
+        let owner_name = s
+            .dos_clients
+            .iter()
+            .find_map(|(name, c)| if c.client_ip == peer_addr.ip().to_string() { Some(name.clone()) } else { None })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let ready = s.owner_images.get(&owner_name).and_then(|imgs| {
+            imgs.iter()
+                .find(|(_, v)| v.ready())
+                .map(|(name, v)| (owner_name.clone(), name.clone(), v.clone()))
+        });
+        ready.unwrap_or_else(|| (owner_name, "no_image".to_string(), crate::state::StoredImageAssets::default()))
+    };
+
+    if assets.ready() {
+        let embedded = crate::stego_service::embed_meta_return_png(
+            &assets.true_buf,
+            &assets.cover_buf,
+            &assets.meta_buf,
+        )?;
+        println!(
+            "[APPROVE_VIEW] Sending embedded image back to client owner={} image={} size={}",
+            owner,
+            image_name,
+            embedded.len()
+        );
+        send_embedded_image(stream.clone(), &image_name, &embedded).await?;
+    } else {
+        println!(
+            "[APPROVE_VIEW] No ready image to send for owner={}, image={}",
+            owner, image_name
+        );
+    }
 
     Ok(())
 }
@@ -446,6 +490,136 @@ async fn handle_sync_usage_tcp(
     client_protocol::handle_sync_usage(state, cfg, &temp_sock, peer_addr, data).await
 }
 
+// -------- Owner image upload (TCP stego pipeline) --------
+
+/// OWNER_IMAGE_META: [owner_len:u16][owner][image_len:u16][image_name][true_size:u32][cover_size:u32][meta_len:u32]
+async fn handle_owner_image_meta(
+    state: SharedState,
+    payload: &[u8],
+) -> Result<()> {
+    if payload.len() < 2 {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_META too short"));
+    }
+    let mut offset = 0;
+    let owner_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+    if payload.len() < offset + owner_len + 2 {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_META invalid owner length"));
+    }
+    let owner = String::from_utf8(payload[offset..offset + owner_len].to_vec())?;
+    offset += owner_len;
+
+    let image_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+    if payload.len() < offset + image_len + 12 {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_META invalid image name length"));
+    }
+    let image_name = String::from_utf8(payload[offset..offset + image_len].to_vec())?;
+    offset += image_len;
+
+    let true_size = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
+    offset += 4;
+    let cover_size = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
+    offset += 4;
+    let meta_size = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
+
+    owner_image::init_owner_image(
+        state,
+        owner.clone(),
+        image_name.clone(),
+        true_size,
+        cover_size,
+        meta_size,
+    )
+    .await;
+
+    println!(
+        "[OWNER_IMAGE_META] owner={} image={} true_size={} cover_size={} meta_size={}",
+        owner, image_name, true_size, cover_size, meta_size
+    );
+    Ok(())
+}
+
+/// OWNER_IMAGE_CHUNK: [owner_len:u16][owner][image_len:u16][image_name][kind:u8][offset:u32][data_len:u16][data]
+/// kind: 0=true, 1=cover, 2=meta
+async fn handle_owner_image_chunk(
+    state: SharedState,
+    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    payload: &[u8],
+) -> Result<()> {
+    let mut offset = 0;
+    if payload.len() < 2 {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_CHUNK too short"));
+    }
+    let owner_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+    if payload.len() < offset + owner_len + 2 {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_CHUNK invalid owner length"));
+    }
+    let owner = String::from_utf8(payload[offset..offset + owner_len].to_vec())?;
+    offset += owner_len;
+
+    let image_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+    if payload.len() < offset + image_len + 1 + 4 + 2 {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_CHUNK invalid image name length"));
+    }
+    let image_name = String::from_utf8(payload[offset..offset + image_len].to_vec())?;
+    offset += image_len;
+
+    let kind = payload[offset];
+    offset += 1;
+    offset += 4; // offset field ignored for now
+
+    let data_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+    if payload.len() < offset + data_len {
+        return Err(anyhow::anyhow!("OWNER_IMAGE_CHUNK data too short"));
+    }
+    let data = &payload[offset..offset + data_len];
+
+    if let Some(assets) = owner_image::append_chunk(state.clone(), &owner, &image_name, kind, data).await {
+        if assets.ready() {
+            println!(
+                "[OWNER_IMAGE_CHUNK] Upload complete owner={} image={} (true={} cover={} meta={})",
+                owner,
+                image_name,
+                assets.true_buf.len(),
+                assets.cover_buf.len(),
+                assets.meta_buf.len()
+            );
+        }
+    }
+
+    // For now, acknowledge with SERVER_PONG (reuse) to keep client aware
+    let mut ack = Vec::new();
+    ack.extend(0u32.to_le_bytes()); // dummy payload
+    send_tcp_response(stream, client_protocol::SERVER_PONG, &ack).await?;
+    println!("[OWNER_IMAGE_CHUNK] ack sent to {}", peer_addr);
+    Ok(())
+}
+
+/// Helper: send an embedded image as IMAGE_CHUNK messages to the connected client
+async fn send_embedded_image(
+    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    image_name: &str,
+    data: &[u8],
+) -> Result<()> {
+    let chunk_size = 1000usize;
+    let total_chunks = ((data.len() as f32) / (chunk_size as f32)).ceil() as u32;
+    for (idx, chunk) in data.chunks(chunk_size).enumerate() {
+        let mut payload = Vec::new();
+        payload.extend((image_name.len() as u16).to_le_bytes());
+        payload.extend(image_name.as_bytes());
+        payload.extend((idx as u32).to_le_bytes());
+        payload.extend(total_chunks.to_le_bytes());
+        payload.extend((chunk.len() as u16).to_le_bytes());
+        payload.extend(chunk);
+        send_tcp_response(stream.clone(), client_protocol::IMAGE_CHUNK, &payload).await?;
+    }
+    Ok(())
+}
 async fn notify_leader_add_client(
     cfg: &Config,
     username: &str,

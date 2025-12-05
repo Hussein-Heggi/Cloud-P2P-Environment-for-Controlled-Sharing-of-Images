@@ -53,6 +53,20 @@ async fn main() -> Result<()> {
             print_usage();
         }
 
+        "upload" => {
+            if args.len() < 8 {
+                println!("Usage: {} upload <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path>", args[0]);
+                return Ok(());
+            }
+            let username = args[2].clone();
+            let server_addr: SocketAddr = args[3].parse()?;
+            let image_name = args[4].clone();
+            let true_path = args[5].clone();
+            let cover_path = args[6].clone();
+            let meta_path = args[7].clone();
+            simple_client::upload_owner_image(&username, server_addr, &image_name, &true_path, &cover_path, &meta_path).await?;
+        }
+
         _ => {
             println!("Unknown command: {}", args[1]);
             print_usage();
@@ -163,6 +177,7 @@ fn print_usage() {
     println!("USAGE:");
     println!("  cargo run -- join <username> <server_ip:port> [image1] [image2] ...");
     println!("  cargo run -- listen <username> <server_ip:port>");
+    println!("  cargo run -- upload <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path>");
     println!();
     println!("EXAMPLES:");
     println!("  # Join server with 2 images (use TCP port 9000)");
@@ -173,5 +188,8 @@ fn print_usage() {
     println!();
     println!("  # Listen mode (receive messages only)");
     println!("  cargo run -- listen charlie 10.40.61.79:9000");
+    println!();
+    println!("  # Upload owner image + cover + metadata");
+    println!("  cargo run -- upload alice 10.40.61.79:9000 secret secret.png cover.png meta.json");
     println!();
 }

@@ -18,6 +18,7 @@ mod state;
 mod stego_service;
 mod tcp_client;
 mod udp;
+mod owner_image;
 
 use crate::state::ServerState;
 
@@ -434,4 +435,3 @@ async fn main() -> anyhow::Result<()> {
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
-

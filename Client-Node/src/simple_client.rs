@@ -3,9 +3,11 @@
 //! Uses TCP for reliable communication with the server
 
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpSocket;
 use tokio::sync::RwLock;
@@ -224,6 +226,13 @@ pub async fn run_listener(
 ) -> Result<()> {
     println!("[CLIENT-LISTENER] Started");
 
+    #[derive(Default)]
+    struct IncomingImage {
+        total_chunks: u32,
+        chunks: HashMap<u32, Vec<u8>>,
+    }
+    let mut images: HashMap<String, IncomingImage> = HashMap::new();
+
     loop {
         let (msg_type, data) = match recv_tcp_message_generic(&mut reader).await {
             Ok(msg) => msg,
@@ -328,8 +337,57 @@ pub async fn run_listener(
             }
 
             IMAGE_CHUNK => {
-                println!("[CLIENT-LISTENER] IMAGE_CHUNK received - implement chunked download");
-                // TODO: Implement chunked image reception
+                // Parse: [name_len:u16][name][seq:u32][total:u32][chunk_len:u16][chunk]
+                let mut offset = 0;
+                if data.len() < 2 {
+                    println!("[CLIENT-LISTENER] IMAGE_CHUNK too short");
+                    continue;
+                }
+                let name_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                offset += 2;
+                if data.len() < offset + name_len + 4 + 4 + 2 {
+                    println!("[CLIENT-LISTENER] IMAGE_CHUNK invalid name length");
+                    continue;
+                }
+                let name = String::from_utf8(data[offset..offset + name_len].to_vec())?;
+                offset += name_len;
+                let seq = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+                offset += 4;
+                let total = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+                offset += 4;
+                let chunk_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                offset += 2;
+                if data.len() < offset + chunk_len {
+                    println!("[CLIENT-LISTENER] IMAGE_CHUNK data too short");
+                    continue;
+                }
+                let chunk = data[offset..offset + chunk_len].to_vec();
+
+                let entry = images.entry(name.clone()).or_insert_with(|| IncomingImage {
+                    total_chunks: total,
+                    chunks: HashMap::new(),
+                });
+                entry.total_chunks = total;
+                entry.chunks.insert(seq, chunk);
+
+                if entry.chunks.len() as u32 == entry.total_chunks {
+                    // Assemble in order
+                    let mut assembled = Vec::new();
+                    for i in 0..entry.total_chunks {
+                        if let Some(c) = entry.chunks.get(&i) {
+                            assembled.extend_from_slice(c);
+                        } else {
+                            println!("[CLIENT-LISTENER] Missing chunk {} for {}", i, name);
+                            break;
+                        }
+                    }
+                    let path = format!("/tmp/received_{}.png", name);
+                    if let Err(e) = tokio::fs::write(&path, &assembled).await {
+                        println!("[CLIENT-LISTENER] Failed to write image {}: {}", path, e);
+                    } else {
+                        println!("[CLIENT-LISTENER] ✅ Image {} assembled and saved to {}", name, path);
+                    }
+                }
             }
 
             _ => {
@@ -360,4 +418,78 @@ pub async fn connect_to_server(server_addr: SocketAddr) -> Result<(tokio::net::t
 
     let (read_half, write_half) = stream.into_split();
     Ok((read_half, Arc::new(tokio::sync::Mutex::new(write_half))))
+}
+
+/// Owner upload: send true image, cover image, and metadata to server
+pub async fn upload_owner_image(
+    username: &str,
+    server_addr: SocketAddr,
+    image_name: &str,
+    true_path: &str,
+    cover_path: &str,
+    meta_path: &str,
+) -> Result<()> {
+    let true_bytes = fs::read(true_path).await
+        .with_context(|| format!("Failed to read true image {}", true_path))?;
+    let cover_bytes = fs::read(cover_path).await
+        .with_context(|| format!("Failed to read cover image {}", cover_path))?;
+    let meta_bytes = fs::read(meta_path).await
+        .with_context(|| format!("Failed to read metadata {}", meta_path))?;
+
+    let (mut reader, writer) = connect_to_server(server_addr).await?;
+
+    // META message
+    let mut meta_payload = Vec::new();
+    meta_payload.extend((username.len() as u16).to_le_bytes());
+    meta_payload.extend(username.as_bytes());
+    meta_payload.extend((image_name.len() as u16).to_le_bytes());
+    meta_payload.extend(image_name.as_bytes());
+    meta_payload.extend((true_bytes.len() as u32).to_le_bytes());
+    meta_payload.extend((cover_bytes.len() as u32).to_le_bytes());
+    meta_payload.extend((meta_bytes.len() as u32).to_le_bytes());
+    {
+        let mut w = writer.lock().await;
+        send_tcp_message_generic(&mut *w, OWNER_IMAGE_META, &meta_payload).await?;
+    }
+
+    // Chunk helper
+    async fn send_chunk(
+        writer: &Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        owner: &str,
+        image: &str,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<()> {
+        let chunk_size = 1000usize;
+        for (idx, chunk) in data.chunks(chunk_size).enumerate() {
+            let mut payload = Vec::new();
+            payload.extend((owner.len() as u16).to_le_bytes());
+            payload.extend(owner.as_bytes());
+            payload.extend((image.len() as u16).to_le_bytes());
+            payload.extend(image.as_bytes());
+            payload.push(kind);
+            payload.extend((idx as u32).to_le_bytes()); // offset placeholder
+            payload.extend((chunk.len() as u16).to_le_bytes());
+            payload.extend(chunk);
+            let mut w = writer.lock().await;
+            send_tcp_message_generic(&mut *w, OWNER_IMAGE_CHUNK, &payload).await?;
+        }
+        Ok(())
+    }
+
+    send_chunk(&writer, username, image_name, 0, &true_bytes).await?;
+    send_chunk(&writer, username, image_name, 1, &cover_bytes).await?;
+    send_chunk(&writer, username, image_name, 2, &meta_bytes).await?;
+
+    // Read a few acks (optional)
+    let _ = tokio::time::timeout(Duration::from_millis(500), recv_tcp_message_generic(&mut reader)).await;
+
+    println!(
+        "[OWNER-UPLOAD] Uploaded image '{}' (true={} bytes, cover={} bytes, meta={} bytes)",
+        image_name,
+        true_bytes.len(),
+        cover_bytes.len(),
+        meta_bytes.len()
+    );
+    Ok(())
 }

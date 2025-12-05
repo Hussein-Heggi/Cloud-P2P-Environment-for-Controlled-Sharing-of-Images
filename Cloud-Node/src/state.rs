@@ -72,6 +72,9 @@ pub struct ServerState {
     pub dos_clients: HashMap<String, DosClient>,  // username -> client info
     pub dos_access: HashMap<String, DosAccess>,   // access_id -> access record
     pub dos_c_version: u32,                        // Incremented on DOS changes
+    // ---- Owner image uploads (TCP stego pipeline) ----
+    // owner -> image_name -> buffers
+    pub owner_images: HashMap<String, HashMap<String, StoredImageAssets>>,
 
     // ---- Pending Requests (new protocol) ----
     pub pending_requests: HashMap<u32, PendingRequest>, // req_id -> pending request
@@ -96,6 +99,7 @@ impl Default for ServerState {
             dos_clients: HashMap::new(),
             dos_access: HashMap::new(),
             dos_c_version: 0,
+            owner_images: HashMap::new(),
             pending_requests: HashMap::new(),
         }
     }
@@ -120,9 +124,28 @@ impl ServerState {
             dos_clients: HashMap::new(),
             dos_access: HashMap::new(),
             dos_c_version: 0,
+            owner_images: HashMap::new(),
             pending_requests: HashMap::new(),
         }
     }
 }
 
 pub type SharedState = Arc<RwLock<ServerState>>;
+
+#[derive(Clone, Debug, Default)]
+pub struct StoredImageAssets {
+    pub true_expected: usize,
+    pub cover_expected: usize,
+    pub meta_expected: usize,
+    pub true_buf: Vec<u8>,
+    pub cover_buf: Vec<u8>,
+    pub meta_buf: Vec<u8>,
+}
+
+impl StoredImageAssets {
+    pub fn ready(&self) -> bool {
+        self.true_buf.len() == self.true_expected
+            && self.cover_buf.len() == self.cover_expected
+            && self.meta_buf.len() == self.meta_expected
+    }
+}
