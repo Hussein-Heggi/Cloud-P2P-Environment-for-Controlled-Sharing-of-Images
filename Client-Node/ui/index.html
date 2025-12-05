@@ -28,8 +28,11 @@
     <div class="card hidden" id="uploadCard">
       <h1>Encrypt & Send</h1>
       <form id="runForm">
-        <label>PNG Image</label>
-        <input type="file" id="image" accept="image/png" required />
+        <label>True Image (to hide)</label>
+        <input type="file" id="trueImage" accept="image/png" required />
+
+        <label>Cover Image (container)</label>
+        <input type="file" id="coverImage" accept="image/png" required />
 
         <label>Metadata (allow)</label>
         <input type="text" id="metadata" required placeholder="bob:5 or alice:3,bob:2" />

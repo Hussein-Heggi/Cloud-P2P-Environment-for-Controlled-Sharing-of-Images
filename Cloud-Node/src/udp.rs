@@ -14,10 +14,8 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
  };
- #[cfg(target_os = "linux")]
- use std::os::unix::io::AsRawFd;
- 
- 
+
+
  use tokio::net::UdpSocket;
  use tokio::sync::mpsc;
  use socket2::{Socket, Domain, Type, Protocol, SockRef};
@@ -29,6 +27,7 @@ use std::{
     config::Config,
     state::{ServerState, SharedState},
     history,
+    client_protocol,
  };
  
  
@@ -41,8 +40,8 @@ use std::{
  
  
  const MAX_DGRAM: usize = 1200;
- const HDR_META: usize = 1 + 4 + 4 + 4 + 4;
- const HDR_CHUNK: usize = 1 + 4 + 4;
+ const HDR_META: usize = 1 + 4 + 4 + 4 + 4 + 4 + 4; // type + req_id + true_chunks + true_bytes + cover_chunks + cover_bytes + meta_bytes
+ const HDR_CHUNK: usize = 1 + 4 + 1 + 4; // type + req_id + image_type + seq
  
  
  // Number of receiver sockets
@@ -143,11 +142,21 @@ use std::{
  
  
  struct ReqCtx {
-    expect_chunks: u32,
-    image_len: usize,
-    chunks: HashMap<u32, Vec<u8>>,  // Store chunks by seq number
+    // True image
+    expect_true_chunks: u32,
+    true_image_len: usize,
+    true_chunks: HashMap<u32, Vec<u8>>,
+    true_received: u32,
+
+    // Cover image
+    expect_cover_chunks: u32,
+    cover_image_len: usize,
+    cover_chunks: HashMap<u32, Vec<u8>>,
+    cover_received: u32,
+
+    // Metadata
     meta_json: Vec<u8>,
-    received: u32,
+
     first_chunk_logged: bool,
  }
  
@@ -155,11 +164,17 @@ use std::{
  impl Default for ReqCtx {
     fn default() -> Self {
         Self {
-            expect_chunks: 0,
-            image_len: 0,
-            chunks: HashMap::new(),
+            expect_true_chunks: 0,
+            true_image_len: 0,
+            true_chunks: HashMap::new(),
+            true_received: 0,
+
+            expect_cover_chunks: 0,
+            cover_image_len: 0,
+            cover_chunks: HashMap::new(),
+            cover_received: 0,
+
             meta_json: Vec::new(),
-            received: 0,
             first_chunk_logged: false,
         }
     }
@@ -174,8 +189,9 @@ use std::{
  struct Job {
     req_id: u32,
     peer: SocketAddr,
-    image_buffer: Vec<u8>,  // Fully assembled image (in sequence order)
-    meta_json: Vec<u8>,     // Metadata JSON
+    true_image_buffer: Vec<u8>,   // True image (to be hidden)
+    cover_image_buffer: Vec<u8>,  // Cover image (container)
+    meta_json: Vec<u8>,           // Metadata JSON
  }
  
  
@@ -232,10 +248,11 @@ use std::{
         let state_clone = state.clone();
         let tx_clone = tx_jobs.clone();
         let my_ip = my_client_ip;
- 
- 
+        let cfg_clone = cfg.clone();
+
+
         tokio::spawn(async move {
-            receiver_task(receiver_id, sock, state_clone, tx_clone, my_ip).await;
+            receiver_task(receiver_id, sock, state_clone, tx_clone, my_ip, cfg_clone).await;
         });
  
  
@@ -337,6 +354,7 @@ use std::{
     state: SharedState,
     tx_jobs: mpsc::UnboundedSender<Job>,
     my_client_ip: IpAddr,
+    cfg: Config,
  ) {
     println!("[RECEIVER-{}] Started", receiver_id);
     debug!(receiver_id, "Receiver task started");
@@ -402,9 +420,11 @@ use std::{
                     continue;
                 }
                 let req_id = u32::from_le_bytes(buf[1..5].try_into().unwrap());
-                let total_chunks = u32::from_le_bytes(buf[5..9].try_into().unwrap());
-                let img_bytes = u32::from_le_bytes(buf[9..13].try_into().unwrap()) as usize;
-                let meta_bytes = u32::from_le_bytes(buf[13..17].try_into().unwrap()) as usize;
+                let true_chunks = u32::from_le_bytes(buf[5..9].try_into().unwrap());
+                let true_bytes = u32::from_le_bytes(buf[9..13].try_into().unwrap()) as usize;
+                let cover_chunks = u32::from_le_bytes(buf[13..17].try_into().unwrap());
+                let cover_bytes = u32::from_le_bytes(buf[17..21].try_into().unwrap()) as usize;
+                let meta_bytes = u32::from_le_bytes(buf[21..25].try_into().unwrap()) as usize;
  
  
                 // Check if I should accept this REQ_META:
@@ -447,10 +467,13 @@ use std::{
  
  
                 let mut c = ReqCtx::default();
-                c.expect_chunks = total_chunks;
-                c.image_len = img_bytes;
+                c.expect_true_chunks = true_chunks;
+                c.true_image_len = true_bytes;
+                c.expect_cover_chunks = cover_chunks;
+                c.cover_image_len = cover_bytes;
                 c.meta_json = meta_json;
-                c.chunks = HashMap::with_capacity(total_chunks as usize);
+                c.true_chunks = HashMap::with_capacity(true_chunks as usize);
+                c.cover_chunks = HashMap::with_capacity(cover_chunks as usize);
  
  
                 ctxs.insert(req_id, c);
@@ -479,15 +502,17 @@ use std::{
  
  
                 println!(
-                    "[RECEIVER-{}] [EXECUTOR] REQ_META accepted from {} | req_id={} total_chunks={} image_len={} meta_len={} (history entry created)",
-                    receiver_id, peer, req_id, total_chunks, img_bytes, meta_bytes
+                    "[RECEIVER-{}] [EXECUTOR] REQ_META accepted from {} | req_id={} true_chunks={} true_len={} cover_chunks={} cover_len={} meta_len={} (history entry created)",
+                    receiver_id, peer, req_id, true_chunks, true_bytes, cover_chunks, cover_bytes, meta_bytes
                 );
                 debug!(
                     receiver_id,
                     %peer,
                     req_id,
-                    total_chunks,
-                    img_bytes,
+                    true_chunks,
+                    true_bytes,
+                    cover_chunks,
+                    cover_bytes,
                     meta_bytes,
                     "REQ_META accepted (executor) - history entry created as in-progress"
                 );
@@ -500,8 +525,9 @@ use std::{
                     continue;
                 }
                 let req_id = u32::from_le_bytes(buf[1..5].try_into().unwrap());
-                let seq = u32::from_le_bytes(buf[5..9].try_into().unwrap());
-                let payload = &buf[9..n];
+                let image_type = buf[5]; // 0 = true_image, 1 = cover_image
+                let seq = u32::from_le_bytes(buf[6..10].try_into().unwrap());
+                let payload = &buf[10..n];
 
                 // ============================================================
                 // STICKY EXECUTOR LOGIC - History-Based Acceptance
@@ -708,74 +734,103 @@ use std::{
                     }
  
  
-                    // Store chunk by sequence number
-                    c.chunks.insert(seq, payload.to_vec());
-                    c.received += 1;
+                    // Store chunk in appropriate HashMap based on image_type
+                    if image_type == 0 {
+                        c.true_chunks.insert(seq, payload.to_vec());
+                        c.true_received += 1;
+                    } else {
+                        c.cover_chunks.insert(seq, payload.to_vec());
+                        c.cover_received += 1;
+                    }
+
+                    let total_received = c.true_received + c.cover_received;
+                    let total_expected = c.expect_true_chunks + c.expect_cover_chunks;
  
  
                     // Progress logging every 1000 chunks
-                    if c.received % 1000 == 0 || c.received == c.expect_chunks {
+                    if total_received % 1000 == 0 || total_received == total_expected {
                         println!(
-                            "[RECEIVER-{}] [EXECUTOR] REQ_CHUNK progress | req_id={} {}/{} chunks ({:.1}%)",
+                            "[RECEIVER-{}] [EXECUTOR] REQ_CHUNK progress | req_id={} {}/{} chunks ({:.1}%) [true:{}/{} cover:{}/{}]",
                             receiver_id,
                             req_id,
-                            c.received,
-                            c.expect_chunks,
-                            (c.received as f64 * 100.0) / (c.expect_chunks.max(1) as f64)
+                            total_received,
+                            total_expected,
+                            (total_received as f64 * 100.0) / (total_expected.max(1) as f64),
+                            c.true_received, c.expect_true_chunks,
+                            c.cover_received, c.expect_cover_chunks
                         );
                         debug!(
                             receiver_id,
                             req_id,
-                            received = c.received,
-                            expect = c.expect_chunks,
+                            total_received,
+                            total_expected,
+                            true_received = c.true_received,
+                            cover_received = c.cover_received,
                             "chunk progress"
                         );
  
  
                         // Explicit 100% notification
-                        if c.received == c.expect_chunks {
+                        if total_received == total_expected {
                             println!(
-                                "✅ [RECEIVER-{}] [EXECUTOR] 100% RECEIVED | req_id={} - ALL {} chunks arrived!",
-                                receiver_id, req_id, c.expect_chunks
+                                "✅ [RECEIVER-{}] [EXECUTOR] 100% RECEIVED | req_id={} - ALL {} chunks arrived (true:{} cover:{})!",
+                                receiver_id, req_id, total_expected, c.expect_true_chunks, c.expect_cover_chunks
                             );
                         }
                     }
  
  
-                    // All chunks received?
-                    if c.received == c.expect_chunks {
+                    // All chunks received for BOTH images?
+                    let both_complete = c.true_received == c.expect_true_chunks && c.cover_received == c.expect_cover_chunks;
+                    if both_complete {
                         println!(
-                            "[RECEIVER-{}] [EXECUTOR] All chunks received | req_id={} chunks={}",
-                            receiver_id, req_id, c.received
+                            "[RECEIVER-{}] [EXECUTOR] All chunks received | req_id={} total={} (true:{} cover:{})",
+                            receiver_id, req_id, total_received, c.true_received, c.cover_received
                         );
-                        debug!(receiver_id, req_id, chunks = c.received, "all chunks in");
+                        debug!(receiver_id, req_id, total_received, true_received = c.true_received, cover_received = c.cover_received, "all chunks in");
  
  
                         // ============================================================
-                        // Reassemble chunks in sequence order
+                        // Reassemble TRUE IMAGE chunks in sequence order
                         // ============================================================
-                        let mut buffer = Vec::with_capacity(c.image_len);
-                        let mut missing_chunks = Vec::new();
+                        let mut true_buffer = Vec::with_capacity(c.true_image_len);
+                        let mut missing_true = Vec::new();
  
  
-                        for seq_idx in 0..c.expect_chunks {
-                            if let Some(chunk_data) = c.chunks.get(&seq_idx) {
-                                buffer.extend_from_slice(chunk_data);
+                        for seq_idx in 0..c.expect_true_chunks {
+                            if let Some(chunk_data) = c.true_chunks.get(&seq_idx) {
+                                true_buffer.extend_from_slice(chunk_data);
                             } else {
-                                missing_chunks.push(seq_idx);
+                                missing_true.push(seq_idx);
+                            }
+                        }
+
+
+                        // ============================================================
+                        // Reassemble COVER IMAGE chunks in sequence order
+                        // ============================================================
+                        let mut cover_buffer = Vec::with_capacity(c.cover_image_len);
+                        let mut missing_cover = Vec::new();
+
+                        for seq_idx in 0..c.expect_cover_chunks {
+                            if let Some(chunk_data) = c.cover_chunks.get(&seq_idx) {
+                                cover_buffer.extend_from_slice(chunk_data);
+                            } else {
+                                missing_cover.push(seq_idx);
                             }
                         }
  
  
-                        if !missing_chunks.is_empty() {
+                        if !missing_true.is_empty() || !missing_cover.is_empty() {
                             eprintln!(
-                                "[RECEIVER-{}] [EXECUTOR] Missing chunks {:?} | req_id={} - dropping request",
-                                receiver_id, missing_chunks, req_id
+                                "[RECEIVER-{}] [EXECUTOR] Missing chunks | req_id={} - true:{:?} cover:{:?} - dropping request",
+                                receiver_id, req_id, missing_true, missing_cover
                             );
                             warn!(
                                 receiver_id,
                                 req_id,
-                                missing = ?missing_chunks,
+                                missing_true = ?missing_true,
+                                missing_cover = ?missing_cover,
                                 "Missing chunks - dropping request"
                             );
                             // NOTE: History entry remains with path=None, timestamp=0
@@ -786,10 +841,10 @@ use std::{
  
  
                         println!(
-                            "[RECEIVER-{}] [EXECUTOR] Chunks reassembled in order | req_id={} bytes={}",
-                            receiver_id, req_id, buffer.len()
+                            "[RECEIVER-{}] [EXECUTOR] Chunks reassembled in order | req_id={} true_bytes={} cover_bytes={}",
+                            receiver_id, req_id, true_buffer.len(), cover_buffer.len()
                         );
-                        debug!(receiver_id, req_id, bytes = buffer.len(), "chunks reassembled");
+                        debug!(receiver_id, req_id, true_bytes = true_buffer.len(), cover_bytes = cover_buffer.len(), "chunks reassembled");
  
  
                         // ============================================================
@@ -798,7 +853,8 @@ use std::{
                         let job = Job {
                             req_id,
                             peer,
-                            image_buffer: buffer,
+                            true_image_buffer: true_buffer,
+                            cover_image_buffer: cover_buffer,
                             meta_json: c.meta_json.clone(),
                         };
  
@@ -863,8 +919,126 @@ use std::{
                     );
                 }
             }
- 
- 
+
+
+            // --------------------- NEW PROTOCOL MESSAGES ---------------------
+            // REQ: Initial handshake (type=10)
+            x if x == client_protocol::REQ => {
+                let state_clone = state.clone();
+                let cfg_clone = cfg.clone();
+                let sock_clone = sock.clone();
+                let data = buf[1..n].to_vec();
+
+                tokio::spawn(async move {
+                    if let Err(e) = client_protocol::handle_req(
+                        state_clone,
+                        &cfg_clone,
+                        &*sock_clone,
+                        peer,
+                        &data,
+                    ).await {
+                        warn!("handle_req error: {}", e);
+                    }
+                });
+            }
+
+            // JOIN: Client registration (type=27)
+            x if x == client_protocol::JOIN => {
+                let state_clone = state.clone();
+                let cfg_clone = cfg.clone();
+                let sock_clone = sock.clone();
+                let data = buf[1..n].to_vec();
+
+                tokio::spawn(async move {
+                    if let Err(e) = client_protocol::handle_join(
+                        state_clone,
+                        &cfg_clone,
+                        &*sock_clone,
+                        peer,
+                        &data,
+                    ).await {
+                        warn!("handle_join error: {}", e);
+                    }
+                });
+            }
+
+            // CLIENT_PING: Heartbeat (type=50)
+            x if x == client_protocol::CLIENT_PING => {
+                let state_clone = state.clone();
+                let sock_clone = sock.clone();
+                let data = buf[1..n].to_vec();
+
+                tokio::spawn(async move {
+                    if let Err(e) = client_protocol::handle_client_ping(
+                        state_clone,
+                        &*sock_clone,
+                        peer,
+                        &data,
+                    ).await {
+                        warn!("handle_client_ping error: {}", e);
+                    }
+                });
+            }
+
+            // VIEW_REQUEST: Viewer requests access (type=12)
+            x if x == client_protocol::VIEW_REQUEST => {
+                let state_clone = state.clone();
+                let cfg_clone = cfg.clone();
+                let sock_clone = sock.clone();
+                let data = buf[1..n].to_vec();
+
+                tokio::spawn(async move {
+                    if let Err(e) = client_protocol::handle_view_request(
+                        state_clone,
+                        &cfg_clone,
+                        &*sock_clone,
+                        peer,
+                        &data,
+                    ).await {
+                        warn!("handle_view_request error: {}", e);
+                    }
+                });
+            }
+
+            // DENY_VIEW: Owner denies view request (type=18)
+            x if x == client_protocol::DENY_VIEW => {
+                let state_clone = state.clone();
+                let sock_clone = sock.clone();
+                let data = buf[1..n].to_vec();
+
+                tokio::spawn(async move {
+                    if let Err(e) = client_protocol::handle_deny_view(
+                        state_clone,
+                        &*sock_clone,
+                        peer,
+                        &data,
+                    ).await {
+                        warn!("handle_deny_view error: {}", e);
+                    }
+                });
+            }
+
+            // SYNC_USAGE: Client syncs offline usage (type=30)
+            x if x == client_protocol::SYNC_USAGE => {
+                let state_clone = state.clone();
+                let cfg_clone = cfg.clone();
+                let sock_clone = sock.clone();
+                let data = buf[1..n].to_vec();
+
+                tokio::spawn(async move {
+                    if let Err(e) = client_protocol::handle_sync_usage(
+                        state_clone,
+                        &cfg_clone,
+                        &*sock_clone,
+                        peer,
+                        &data,
+                    ).await {
+                        warn!("handle_sync_usage error: {}", e);
+                    }
+                });
+            }
+
+
             _ => {
                 // Unknown packet type
             }
@@ -911,22 +1085,25 @@ use std::{
         let Job {
             req_id,
             peer,
-            image_buffer,
+            true_image_buffer,
+            cover_image_buffer,
             meta_json,
         } = job;
  
  
         println!(
-            "[WORKER-{}] Processing job | req_id={} image_len={} meta_len={}",
+            "[WORKER-{}] Processing job | req_id={} true_len={} cover_len={} meta_len={}",
             worker_id,
             req_id,
-            image_buffer.len(),
+            true_image_buffer.len(),
+            cover_image_buffer.len(),
             meta_json.len()
         );
         debug!(
             worker_id,
             req_id,
-            image_len = image_buffer.len(),
+            true_len = true_image_buffer.len(),
+            cover_len = cover_image_buffer.len(),
             meta_len = meta_json.len(),
             "processing job"
         );
@@ -1060,23 +1237,26 @@ use std::{
  
  
         println!(
-            "[WORKER-{}] [EXECUTOR] Starting steganography | req_id={} image_len={} meta_len={}",
+            "[WORKER-{}] [EXECUTOR] Starting steganography | req_id={} true_len={} cover_len={} meta_len={}",
             worker_id,
             req_id,
-            image_buffer.len(),
+            true_image_buffer.len(),
+            cover_image_buffer.len(),
             stego_meta_json.len()
         );
         debug!(
             worker_id,
             req_id,
-            img_len = image_buffer.len(),
+            true_len = true_image_buffer.len(),
+            cover_len = cover_image_buffer.len(),
             meta_len = stego_meta_json.len(),
             "starting steganography"
         );
  
  
         let encrypted_png = match crate::stego_service::embed_meta_return_png(
-            &image_buffer,
+            &true_image_buffer,
+            &cover_image_buffer,
             &stego_meta_json,
         ) {
             Ok(png) => png,
@@ -1093,17 +1273,22 @@ use std::{
         };
  
  
+        let total_input_size = true_image_buffer.len() + cover_image_buffer.len();
         println!(
-            "[WORKER-{}] [EXECUTOR] Steganography complete | req_id={} original_size={} encrypted_size={}",
+            "[WORKER-{}] [EXECUTOR] Steganography complete | req_id={} input_size={} (true:{} cover:{}) encrypted_size={}",
             worker_id,
             req_id,
-            image_buffer.len(),
+            total_input_size,
+            true_image_buffer.len(),
+            cover_image_buffer.len(),
             encrypted_png.len()
         );
         debug!(
             worker_id,
             req_id,
-            original_size = image_buffer.len(),
+            total_input_size,
+            true_size = true_image_buffer.len(),
+            cover_size = cover_image_buffer.len(),
             encrypted_size = encrypted_png.len(),
             "Steganography complete"
         );

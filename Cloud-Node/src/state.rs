@@ -1,5 +1,8 @@
 use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use tokio::sync::RwLock;
+use firestore::FirestoreDb;
+
+use crate::firebase::{DosClient, DosAccess};
 
 /// History table record for fault tolerance and deduplication
 #[derive(Clone, Debug)]
@@ -15,6 +18,26 @@ pub struct LoadInfo {
     pub server_id: u32,
     pub load_score: f32,
     pub timestamp_ms: u128,
+}
+
+/// Request types for pending requests
+#[derive(Clone, Debug)]
+pub enum RequestType {
+    View,
+    AdjustViews,
+    Revoke,
+}
+
+/// Pending request tracking (repurposed history table for new protocol)
+#[derive(Clone, Debug)]
+pub struct PendingRequest {
+    pub req_id: u32,
+    pub executor_ip: IpAddr,
+    pub req_type: RequestType,
+    pub owner_name: String,
+    pub viewer_name: String,
+    pub image_name: String,
+    pub initiated_at: u128,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +64,17 @@ pub struct ServerState {
     // ---- Metrics ----
     pub requests_received: u64, // count of accepted REQ_META (one per request)
     pub requests_served: u64,   // count of completed responses
+
+    // ---- Firebase Connection ----
+    pub firestore_db: Option<FirestoreDb>, // Firebase connection (None if Firebase down)
+
+    // ---- DOS-S Local Copy (synchronized from Firebase) ----
+    pub dos_clients: HashMap<String, DosClient>,  // username -> client info
+    pub dos_access: HashMap<String, DosAccess>,   // access_id -> access record
+    pub dos_c_version: u32,                        // Incremented on DOS changes
+
+    // ---- Pending Requests (new protocol) ----
+    pub pending_requests: HashMap<u32, PendingRequest>, // req_id -> pending request
 }
 
 impl Default for ServerState {
@@ -58,6 +92,11 @@ impl Default for ServerState {
             history: HashMap::new(),
             requests_received: 0,
             requests_served: 0,
+            firestore_db: None,
+            dos_clients: HashMap::new(),
+            dos_access: HashMap::new(),
+            dos_c_version: 0,
+            pending_requests: HashMap::new(),
         }
     }
 }
@@ -77,6 +116,11 @@ impl ServerState {
             history: HashMap::new(),
             requests_received: 0,
             requests_served: 0,
+            firestore_db: None,
+            dos_clients: HashMap::new(),
+            dos_access: HashMap::new(),
+            dos_c_version: 0,
+            pending_requests: HashMap::new(),
         }
     }
 }

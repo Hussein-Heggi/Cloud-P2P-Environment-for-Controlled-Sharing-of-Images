@@ -20,6 +20,10 @@ pub struct Config {
     #[arg(long)]
     pub assign_bind: Option<String>,
 
+    /// Bind for executor-leader UDP (executor <-> leader communication)
+    #[arg(long)]
+    pub exec_leader_bind: Option<String>,
+
     /// Pacing delay in microseconds per response packet (0 = no pacing)
     #[arg(long, default_value_t = 2000)]
     pub pacing_us: u64,
@@ -87,6 +91,15 @@ impl Config {
         ]
     }
 
+    /// Executor-Leader communication peers (server-to-server UDP)
+    pub fn executor_leader_peers() -> &'static [&'static str] {
+        &[
+            "10.40.61.79:8380",  // node 1
+            "10.40.58.169:8381", // node 2
+            "10.40.63.10:8383",  // node 3
+        ]
+    }
+
     pub fn service_bind_addr(&self) -> Option<SocketAddr> {
         if let Some(b) = &self.udp_bind {
             Some(Self::parse_addr(b))
@@ -114,6 +127,15 @@ impl Config {
         }
     }
 
+    pub fn executor_leader_bind_addr(&self) -> Option<SocketAddr> {
+        if let Some(b) = &self.exec_leader_bind {
+            Some(Self::parse_addr(b))
+        } else {
+            let idx = (self.node_id - 1) as usize;
+            Some(Self::parse_addr(Self::executor_leader_peers()[idx]))
+        }
+    }
+
     pub fn service_peer_addrs() -> Vec<SocketAddr> {
         Self::service_peers()
             .iter()
@@ -130,6 +152,13 @@ impl Config {
 
     pub fn assignment_peer_addrs(&self) -> Vec<SocketAddr> {
         Self::assignment_peers()
+            .iter()
+            .map(|s| Self::parse_addr(s))
+            .collect()
+    }
+
+    pub fn executor_leader_peer_addrs(&self) -> Vec<SocketAddr> {
+        Self::executor_leader_peers()
             .iter()
             .map(|s| Self::parse_addr(s))
             .collect()
@@ -158,10 +187,16 @@ impl Config {
             Self::assignment_peers().len(),
             "service and assignment peer lists must have same length"
         );
+        assert_eq!(
+            Self::service_peers().len(),
+            Self::executor_leader_peers().len(),
+            "service and executor_leader peer lists must have same length"
+        );
         for i in 0..n {
             let svc = Self::parse_addr(Self::service_peers()[i]);
             let ele = Self::parse_addr(Self::election_peers()[i]);
             let asg = Self::parse_addr(Self::assignment_peers()[i]);
+            let exc = Self::parse_addr(Self::executor_leader_peers()[i]);
             assert_eq!(
                 svc.ip(),
                 ele.ip(),
@@ -184,6 +219,18 @@ impl Config {
                 svc.port(),
                 asg.port(),
                 "service and assignment ports must differ for node {}",
+                i + 1
+            );
+            assert_eq!(
+                svc.ip(),
+                exc.ip(),
+                "service and executor_leader IPs must match for node {}",
+                i + 1
+            );
+            assert_ne!(
+                svc.port(),
+                exc.port(),
+                "service and executor_leader ports must differ for node {}",
                 i + 1
             );
         }

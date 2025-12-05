@@ -6,10 +6,13 @@ use tokio::time::Duration;
 use tracing::info;
 
 mod assignment;
+mod client_protocol;
 mod config;
 mod election;
 mod epoch;
+mod executor_leader;
 mod failure;
+mod firebase;
 mod history;
 mod state;
 mod stego_service;
@@ -37,6 +40,61 @@ async fn main() -> anyhow::Result<()> {
 
     // Shared state
     let state: state::SharedState = Arc::new(RwLock::new(ServerState::new(cfg.node_id)));
+
+    // Initialize Firebase connection
+    println!("[MAIN] Initializing Firebase connection...");
+    match firebase::init_firestore().await {
+        Ok(db) => {
+            println!("[MAIN] ✅ Firebase connected successfully");
+            info!("Firebase Firestore connected");
+
+            // Store Firebase connection in state
+            {
+                let mut s = state.write().await;
+                s.firestore_db = Some(db);
+            }
+
+            // Load initial DOS data from Firebase
+            let s = state.read().await;
+            if let Some(db) = &s.firestore_db {
+                println!("[MAIN] Loading initial DOS data from Firebase...");
+
+                match firebase::read_all_clients(db).await {
+                    Ok(clients) => {
+                        drop(s);
+                        let mut s = state.write().await;
+                        s.dos_clients = clients;
+                        println!("[MAIN] ✅ Loaded {} clients from Firebase", s.dos_clients.len());
+                    }
+                    Err(e) => {
+                        println!("[MAIN] ⚠️  Failed to load clients from Firebase: {}", e);
+                    }
+                }
+
+                let s = state.read().await;
+                if let Some(db) = &s.firestore_db {
+                    match firebase::read_all_access(db).await {
+                        Ok(access) => {
+                            drop(s);
+                            let mut s = state.write().await;
+                            s.dos_access = access;
+                            println!("[MAIN] ✅ Loaded {} access records from Firebase", s.dos_access.len());
+                        }
+                        Err(e) => {
+                            println!("[MAIN] ⚠️  Failed to load access records from Firebase: {}", e);
+                        }
+                    }
+                }
+            } else {
+                drop(s);
+            }
+        }
+        Err(e) => {
+            println!("[MAIN] ⚠️  Firebase connection failed: {}", e);
+            println!("[MAIN] Server will continue without Firebase (degraded mode)");
+            info!(error=%e, "Firebase connection failed - running without Firebase");
+        }
+    }
 
     // System monitor for CPU/RAM tracking
     let sys = Arc::new(tokio::sync::Mutex::new(System::new_all()));
@@ -133,6 +191,165 @@ async fn main() -> anyhow::Result<()> {
             // Create a temporary socket for broadcasting
             if let Ok(temp_sock) = tokio::net::UdpSocket::bind("0.0.0.0:0").await {
                 history::run_leader_sync_task(st, Arc::new(temp_sock), cfg2).await;
+            }
+        });
+    }
+
+    // ============================================================================
+    // NEW PROTOCOL TASKS (Firebase + Executor-Leader + Client Management)
+    // ============================================================================
+
+    // Firebase real-time listener (listens to DOS changes and updates local state)
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            loop {
+                // Wait until Firebase is connected
+                let db = {
+                    let s = st.read().await;
+                    s.firestore_db.clone()
+                };
+
+                if let Some(db) = db {
+                    println!("[FIREBASE-LISTENER] Starting real-time listener...");
+
+                    // Run listener (will run forever unless error)
+                    if let Err(e) = firebase::listen_dos_changes(db, st.clone()).await {
+                        println!("[FIREBASE-LISTENER] ⚠️  Listener error: {} - restarting in 10s", e);
+                        info!(error=%e, "Firebase listener error - will restart");
+                    }
+                }
+
+                // Wait before retry
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        });
+    }
+
+    // Executor-Leader communication channel (leader only)
+    {
+        let st = state.clone();
+        let cfg2 = cfg.clone();
+        tokio::spawn(async move {
+            loop {
+                println!("[EXECUTOR-LEADER] Starting executor-leader channel...");
+
+                if let Err(e) = executor_leader::run_executor_leader_channel(st.clone(), cfg2.clone()).await {
+                    println!("[EXECUTOR-LEADER] ⚠️  Channel error: {} - restarting in 5s", e);
+                    info!(error=%e, "Executor-leader channel error - will restart");
+                }
+
+                // Wait before retry
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+    }
+
+    // Firebase cleanup: Delete expired access records (every hour)
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            loop {
+                // Wait 1 hour
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+
+                // Only leader runs cleanup
+                let (is_leader, db) = {
+                    let s = st.read().await;
+                    (s.is_leader, s.firestore_db.clone())
+                };
+
+                if is_leader {
+                    if let Some(db) = db {
+                        println!("[FIREBASE-CLEANUP] Running cleanup of expired access records...");
+
+                        if let Err(e) = firebase::cleanup_expired_access(&db, st.clone()).await {
+                            println!("[FIREBASE-CLEANUP] ⚠️  Cleanup error: {}", e);
+                            info!(error=%e, "Firebase cleanup error");
+                        } else {
+                            println!("[FIREBASE-CLEANUP] ✅ Cleanup completed");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Client online status check (every 30 seconds)
+    {
+        let st = state.clone();
+        let cfg2 = cfg.clone();
+        tokio::spawn(async move {
+            loop {
+                // Wait 30 seconds
+                tokio::time::sleep(Duration::from_secs(30)).await;
+
+                // Only executor runs this check
+                let (is_executor, _db, _executor_ip) = {
+                    let s = st.read().await;
+                    let my_ip = cfg2.service_bind_addr()
+                        .expect("service_bind_addr not configured")
+                        .ip();
+
+                    let is_exec = if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+                        exec_ip == &my_ip && std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() <= deadline
+                    } else {
+                        false
+                    };
+
+                    (is_exec, s.firestore_db.clone(), s.executor_ip)
+                };
+
+                if is_executor {
+                    println!("[CLIENT-ONLINE-CHECK] Checking client online status...");
+
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis();
+
+                    // Offline threshold: 45 seconds (3 missed pings at 10s interval + 15s buffer)
+                    let offline_threshold_ms = 45_000u128;
+
+                    let mut offline_clients = Vec::new();
+
+                    // Find offline clients
+                    {
+                        let s = st.read().await;
+                        for (username, client) in &s.dos_clients {
+                            if client.online {
+                                let elapsed = now_ms.saturating_sub(client.last_seen);
+                                if elapsed > offline_threshold_ms {
+                                    offline_clients.push(username.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    // Mark offline clients and notify leader
+                    for username in offline_clients {
+                        println!("[CLIENT-ONLINE-CHECK] Client {} is offline (no ping for 45s) - removing from DOS", username);
+
+                        // Send DELETE_CLIENT to leader
+                        let mut data = Vec::new();
+                        let username_bytes = username.as_bytes();
+                        data.extend((username_bytes.len() as u16).to_le_bytes());
+                        data.extend_from_slice(username_bytes);
+
+                        if let Err(e) = executor_leader::send_to_leader(
+                            &cfg2,
+                            executor_leader::EXEC_DELETE_CLIENT,
+                            &data,
+                        ).await {
+                            println!("[CLIENT-ONLINE-CHECK] ⚠️  Failed to send DELETE_CLIENT to leader: {}", e);
+                        } else {
+                            println!("[CLIENT-ONLINE-CHECK] ✅ DELETE_CLIENT sent to leader for {}", username);
+                        }
+                    }
+                }
             }
         });
     }

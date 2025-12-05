@@ -29,11 +29,16 @@ loginForm.addEventListener("submit", (e) => {
 runForm.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  const imgInput = document.getElementById("image");
+  const trueImgInput = document.getElementById("trueImage");
+  const coverImgInput = document.getElementById("coverImage");
   const meta = document.getElementById("metadata").value.trim();
 
-  if (!imgInput.files.length) {
-    alert("Please choose a PNG image");
+  if (!trueImgInput.files.length) {
+    alert("Please choose a true image (PNG)");
+    return;
+  }
+  if (!coverImgInput.files.length) {
+    alert("Please choose a cover image (PNG)");
     return;
   }
   if (!/^[A-Za-z0-9_]+:\d+(,[A-Za-z0-9_]+:\d+)*$/.test(meta)) {
@@ -45,7 +50,8 @@ runForm.addEventListener("submit", async (e) => {
   fd.append("username", "demo");
   fd.append("password", "demo");
   fd.append("metadata", meta);
-  fd.append("image", imgInput.files[0]);
+  fd.append("trueImage", trueImgInput.files[0]);
+  fd.append("coverImage", coverImgInput.files[0]);
 
   runStatus.textContent = "Running client…";
   toggleRunDisabled(true);

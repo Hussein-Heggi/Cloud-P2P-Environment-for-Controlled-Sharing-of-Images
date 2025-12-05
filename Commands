@@ -1,0 +1,120 @@
+Server Commands (All Parameters)
+Node 1 - Full Configuration
+cd /home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Cloud-Node
+
+./target/release/server \
+  --node-id 1 \
+  --udp-bind "10.40.61.79:8180" \
+  --elect-bind "10.40.61.79:8080" \
+  --assign-bind "10.40.61.79:8280" \
+  --pacing-us 2000 \
+  --assign-broadcast-every-ms 1500 \
+  --assign-lease-ms 8000 \
+  --load-broadcast-every-ms 750 \
+  --executor-switch-threshold 0.05 \
+  --fail-every-secs 0 \
+  --fail-duration-secs 15
+Node 2 - Full Configuration
+cd /home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Cloud-Node
+
+./target/release/server \
+  --node-id 2 \
+  --udp-bind "10.40.58.169:8181" \
+  --elect-bind "10.40.58.169:8081" \
+  --assign-bind "10.40.58.169:8281" \
+  --pacing-us 2000 \
+  --assign-broadcast-every-ms 1500 \
+  --assign-lease-ms 8000 \
+  --load-broadcast-every-ms 750 \
+  --executor-switch-threshold 0.05 \
+  --fail-every-secs 0 \
+  --fail-duration-secs 15
+Node 3 - Full Configuration
+cd /home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Cloud-Node
+
+./target/release/server \
+  --node-id 3 \
+  --udp-bind "10.40.63.10:8183" \
+  --elect-bind "10.40.63.10:8083" \
+  --assign-bind "10.40.63.10:8283" \
+  --pacing-us 2000 \
+  --assign-broadcast-every-ms 1500 \
+  --assign-lease-ms 8000 \
+  --load-broadcast-every-ms 750 \
+  --executor-switch-threshold 0.05 \
+  --fail-every-secs 0 \
+  --fail-duration-secs 15
+Client Commands (All Parameters)
+Single User Request - Full Configuration
+cd /home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Client-Node
+
+./target/release/client-node \
+  --peers "10.40.61.79:8180,10.40.58.169:8181,10.40.63.10:8183" \
+  --processes 1 \
+  --requests-per-user 1 \
+  --image "/path/to/your/image.png" \
+  --op encrypt \
+  --owner "alice" \
+  --allow "bob:5,charlie:3" \
+  --image-id "vacation_photo_001" \
+  --sender-id 0 \
+  --pacing-us 2000 \
+  --inter-request-delay-ms 3000 \
+  --jitter-ms 2000
+Multiple Users (5 processes) - Full Configuration
+./target/release/client-node \
+  --peers "10.40.61.79:8180,10.40.58.169:8181,10.40.63.10:8183" \
+  --processes 5 \
+  --requests-per-user 10 \
+  --image "/path/to/your/image.png" \
+  --op encrypt \
+  --owner "alice" \
+  --allow "bob:5,charlie:3,dave:2" \
+  --image-id "test_image_001" \
+  --sender-id 0 \
+  --pacing-us 2000 \
+  --inter-request-delay-ms 3000 \
+  --jitter-ms 2000
+Grant Operation - Full Configuration
+./target/release/client-node \
+  --peers "10.40.61.79:8180,10.40.58.169:8181,10.40.63.10:8183" \
+  --processes 1 \
+  --requests-per-user 1 \
+  --image "/path/to/your/image.png" \
+  --op grant \
+  --owner "alice" \
+  --allow "bob:5" \
+  --image-id "vacation_photo_001" \
+  --sender-id 0 \
+  --pacing-us 2000 \
+  --inter-request-delay-ms 3000 \
+  --jitter-ms 2000
+Adjust Views Operation - Full Configuration
+./target/release/client-node \
+  --peers "10.40.61.79:8180,10.40.58.169:8181,10.40.63.10:8183" \
+  --processes 1 \
+  --requests-per-user 1 \
+  --image "/path/to/your/image.png" \
+  --op adjust-views \
+  --owner "alice" \
+  --allow "bob:5" \
+  --image-id "vacation_photo_001" \
+  --sender-id 0 \
+  --pacing-us 2000 \
+  --inter-request-delay-ms 3000 \
+  --jitter-ms 2000
+Revoke Operation - Full Configuration
+./target/release/client-node \
+  --peers "10.40.61.79:8180,10.40.58.169:8181,10.40.63.10:8183" \
+  --processes 1 \
+  --requests-per-user 1 \
+  --image "/path/to/your/image.png" \
+  --op revoke \
+  --owner "alice" \
+  --allow "bob:5" \
+  --image-id "vacation_photo_001" \
+  --sender-id 0 \
+  --pacing-us 2000 \
+  --inter-request-delay-ms 3000 \
+  --jitter-ms 2000
+

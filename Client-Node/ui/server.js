@@ -96,15 +96,18 @@ app.get("/api/health", (_req, res) => {
 });
 
 // Main endpoint
-app.post("/api/run-client", upload.single("image"), (req, res) => {
+app.post("/api/run-client", upload.fields([
+  { name: 'trueImage', maxCount: 1 },
+  { name: 'coverImage', maxCount: 1 }
+]), (req, res) => {
   try {
     const { username, password, metadata } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({ error: "Missing credentials" });
     }
-    if (!req.file) {
-      return res.status(400).json({ error: "No PNG uploaded" });
+    if (!req.files || !req.files.trueImage || !req.files.coverImage) {
+      return res.status(400).json({ error: "Both true image and cover image must be uploaded" });
     }
 
     const allow = String(metadata || "").trim();
@@ -116,13 +119,15 @@ app.post("/api/run-client", upload.single("image"), (req, res) => {
       return res.status(500).json({ error: `Client binary not found at ${CLIENT_BIN}. Run: cargo build --release` });
     }
 
-    const imgPath = req.file.path;
+    const trueImgPath = req.files.trueImage[0].path;
+    const coverImgPath = req.files.coverImage[0].path;
 
     const args = [
       "--peers", PEERS,
       "--processes", "1",
       "--requests-per-user", "1",
-      "--image", imgPath,
+      "--image", trueImgPath,
+      "--cover-image", coverImgPath,
       "--allow", allow
     ];
 
