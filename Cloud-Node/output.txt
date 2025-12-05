@@ -1,36 +1,38 @@
-[EPOCH] Aligned to nearest second boundary (waited 512ms)
-[EPOCH] Global epoch initialized at SystemTime { tv_sec: 1764959700, tv_nsec: 0 }
+[EPOCH] Aligned to nearest second boundary (waited 844ms)
+[EPOCH] Global epoch initialized at SystemTime { tv_sec: 1764975397, tv_nsec: 0 }
 [MAIN] Epoch initialized, starting server node_id=1
 [MAIN] Initializing Firebase connection...
-[2m2025-12-05T18:35:00.000108Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Initializing Firestore connection...
-[2m2025-12-05T18:35:00.000123Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Using Firebase service account key file [3mservice_account[0m[2m=[0m"../firebase-admin.json"
-[2m2025-12-05T18:35:00.000144Z[0m [32m INFO[0m [2mfirestore::db[0m[2m:[0m Creating a new database client. [3mdatabase_path[0m[2m=[0m"projects/dist-proj-25/databases/(default)" [3mapi_url[0m[2m=[0m"https://firestore.googleapis.com" [3mtoken_scopes[0m[2m=[0m"https://www.googleapis.com/auth/cloud-platform"
-[2m2025-12-05T18:35:00.123970Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firestore connection established
+[2m2025-12-05T22:56:37.000214Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Initializing Firestore connection...
+[2m2025-12-05T22:56:37.000261Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Using Firebase service account key file [3mservice_account[0m[2m=[0m"../firebase-admin.json"
+[2m2025-12-05T22:56:37.000348Z[0m [32m INFO[0m [2mfirestore::db[0m[2m:[0m Creating a new database client. [3mdatabase_path[0m[2m=[0m"projects/dist-proj-25/databases/(default)" [3mapi_url[0m[2m=[0m"https://firestore.googleapis.com" [3mtoken_scopes[0m[2m=[0m"https://www.googleapis.com/auth/cloud-platform"
+[2m2025-12-05T22:56:37.308795Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firestore connection established
 [MAIN] ✅ Firebase connected successfully
-[2m2025-12-05T18:35:00.123988Z[0m [32m INFO[0m [2mserver[0m[2m:[0m Firebase Firestore connected
+[2m2025-12-05T22:56:37.308881Z[0m [32m INFO[0m [2mserver[0m[2m:[0m Firebase Firestore connected
 [MAIN] Loading initial DOS data from Firebase...
 [MAIN] ✅ Loaded 0 clients from Firebase
 [MAIN] ✅ Loaded 0 access records from Firebase
 Server up. Press Ctrl-C to exit.
 🚀 Starting UDP server with 15 receivers and 15 workers on 10.40.61.79:8000
 Assignment port bound: 10.40.61.79:8280
-[2m2025-12-05T18:35:01.509450Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Election socket bound [3mmy_addr[0m[2m=[0m10.40.61.79:8010 [3mnode[0m[2m=[0m1
-[2m2025-12-05T18:35:01.509456Z[0m [32m INFO[0m [2mserver::udp[0m[2m:[0m UDP server starting with multi-socket architecture [3mbind_addr[0m[2m=[0m10.40.61.79:8000 [3mnum_receivers[0m[2m=[0m15 [3mnum_workers[0m[2m=[0m15
-[2m2025-12-05T18:35:01.509460Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m Assignment port bound [3mbind_addr[0m[2m=[0m10.40.61.79:8280
+🚀 TCP client server listening on 10.40.61.79:9080
+[2m2025-12-05T22:56:38.822747Z[0m [32m INFO[0m [2mserver::udp[0m[2m:[0m UDP server starting with multi-socket architecture [3mbind_addr[0m[2m=[0m10.40.61.79:8000 [3mnum_receivers[0m[2m=[0m15 [3mnum_workers[0m[2m=[0m15
+[2m2025-12-05T22:56:38.822755Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m Assignment port bound [3mbind_addr[0m[2m=[0m10.40.61.79:8280
 [FIREBASE-LISTENER] Starting real-time listener...
 [EXECUTOR-LEADER] Starting executor-leader channel...
-[2m2025-12-05T18:35:01.509485Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:35:01.509505Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
-[2m2025-12-05T18:35:01.509504Z[0m [32m INFO[0m [2mserver::executor_leader[0m[2m:[0m Starting executor-leader channel on 10.40.61.79:8380
+[2m2025-12-05T22:56:38.822772Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:56:38.822782Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:56:38.822753Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Election socket bound [3mmy_addr[0m[2m=[0m10.40.61.79:8010 [3mnode[0m[2m=[0m1
+[2m2025-12-05T22:56:38.822786Z[0m [32m INFO[0m [2mserver::executor_leader[0m[2m:[0m Starting executor-leader channel on 10.40.61.79:8380
+[2m2025-12-05T22:56:38.822761Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m TCP client server started [3mbind_addr[0m[2m=[0m10.40.61.79:9080
 ✅ Receiver 0 spawned on 10.40.61.79:8000
 ✅ Receiver 1 spawned on 10.40.61.79:8000
-[RECEIVER-0] Started
 ✅ Receiver 2 spawned on 10.40.61.79:8000
+[RECEIVER-0] Started
 [RECEIVER-1] Started
 ✅ Receiver 3 spawned on 10.40.61.79:8000
+[RECEIVER-2] Started
 ✅ Receiver 4 spawned on 10.40.61.79:8000
 [RECEIVER-3] Started
-[RECEIVER-2] Started
 ✅ Receiver 5 spawned on 10.40.61.79:8000
 [RECEIVER-4] Started
 ✅ Receiver 6 spawned on 10.40.61.79:8000
@@ -51,126 +53,1036 @@ Assignment port bound: 10.40.61.79:8280
 [RECEIVER-12] Started
 ✅ Receiver 14 spawned on 10.40.61.79:8000
 ✅ Worker 0 spawned
-✅ Worker 1 spawned
-✅ Worker 2 spawned
 [RECEIVER-13] Started
+✅ Worker 1 spawned
+[WORKER-0] Started
+✅ Worker 2 spawned
 ✅ Worker 3 spawned
+[WORKER-1] Started
 [RECEIVER-14] Started
 ✅ Worker 4 spawned
 ✅ Worker 5 spawned
-✅ Worker 6 spawned
-[WORKER-2] Started
-✅ Worker 7 spawned
-[WORKER-1] Started
-✅ Worker 8 spawned
-[WORKER-0] Started
-[WORKER-7] Started
-[WORKER-8] Started
-[WORKER-5] Started
-✅ Worker 9 spawned
-[WORKER-6] Started
-[WORKER-9] Started
 [WORKER-4] Started
+[WORKER-2] Started
 [WORKER-3] Started
+✅ Worker 6 spawned
+[WORKER-5] Started
+[WORKER-6] Started
+✅ Worker 7 spawned
+✅ Worker 8 spawned
+✅ Worker 9 spawned
+[WORKER-7] Started
 ✅ Worker 10 spawned
+[WORKER-8] Started
+[WORKER-9] Started
 ✅ Worker 11 spawned
-✅ Worker 12 spawned
 [WORKER-10] Started
-✅ Worker 13 spawned
-[WORKER-12] Started
+✅ Worker 12 spawned
 [WORKER-11] Started
+[WORKER-12] Started
+✅ Worker 13 spawned
 ✅ Worker 14 spawned
 🎉 All receivers and workers spawned successfully!
-[2m2025-12-05T18:35:01.509937Z[0m [32m INFO[0m [2mserver::udp[0m[2m:[0m UDP server fully initialized
-[WORKER-14] Started
+[2m2025-12-05T22:56:38.823269Z[0m [32m INFO[0m [2mserver::udp[0m[2m:[0m UDP server fully initialized
 [WORKER-13] Started
-[2m2025-12-05T18:35:01.510899Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Follower, leader=None, successor_hint=None, Δhb=0.0s
-[2m2025-12-05T18:35:01.811350Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Sending initial discovery burst [3mnode[0m[2m=[0m1
-[LOAD] node_id=1 load=0.179 epoch_offset=2252ms
-[2m2025-12-05T18:35:03.812942Z[0m [33m WARN[0m [2mserver::election[0m[2m:[0m No leader after startup delay; starting election [3mnode[0m[2m=[0m1
-[2m2025-12-05T18:35:03.812985Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Starting election (bully) [3mnode[0m[2m=[0m1
-[2m2025-12-05T18:35:05.013621Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m No higher node claimed leadership; becoming leader [3mnode[0m[2m=[0m1
-[2m2025-12-05T18:35:05.013656Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node became leader [3mleader[0m[2m=[0m1
-[2m2025-12-05T18:35:05.013695Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m leader changed [3mleader[0m[2m=[0m1 [3mis_leader[0m[2m=[0mtrue [3mnode[0m[2m=[0m1
-[ASSIGN] executor=node_1 lease=8000ms epoch_offset=6002ms | loads: 
-[2m2025-12-05T18:35:06.002276Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m6002
-[2m2025-12-05T18:35:06.510998Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=5.0s
-[HISTORY] Table has 0 entries (epoch_offset=10001ms):
-  (empty)
-[METRICS] requests_received=0 requests_served=0 epoch_offset=10001ms
-[2m2025-12-05T18:35:10.001814Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m10001
-[FIREBASE-LISTENER] Starting real-time listener...
-[2m2025-12-05T18:35:11.510824Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=10.0s
-[2m2025-12-05T18:35:11.510839Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:35:11.510944Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
-[2m2025-12-05T18:35:15.002748Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m15002
-[LOAD] node_id=1 load=0.155 epoch_offset=15003ms
-[2m2025-12-05T18:35:16.511359Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=15.0s
-[ASSIGN] executor=node_1 lease=8000ms epoch_offset=18002ms | loads: 
-[2m2025-12-05T18:35:18.002505Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m18002
-[METRICS] requests_received=0 requests_served=0 epoch_offset=20002ms
-[HISTORY] Table has 0 entries (epoch_offset=20002ms):
-  (empty)
-[2m2025-12-05T18:35:20.002609Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m20002
-[2m2025-12-05T18:35:21.510968Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=20.0s
-[FIREBASE-LISTENER] Starting real-time listener...
-[2m2025-12-05T18:35:21.512138Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:35:21.512175Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
-[2m2025-12-05T18:35:26.511465Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=25.0s
-[LOAD] node_id=1 load=0.157 epoch_offset=27753ms
-[HISTORY] Table has 0 entries (epoch_offset=30002ms):
-  (empty)
-[METRICS] requests_received=0 requests_served=0 epoch_offset=30002ms
-[2m2025-12-05T18:35:30.002545Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m30002
-[2m2025-12-05T18:35:30.002678Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m30002
-[ASSIGN] executor=node_1 lease=8000ms epoch_offset=31501ms | loads: 
-[2m2025-12-05T18:35:31.501703Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m31501
-[CLIENT-ONLINE-CHECK] Checking client online status...
-[2m2025-12-05T18:35:31.510715Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=30.0s
-[FIREBASE-LISTENER] Starting real-time listener...
-[2m2025-12-05T18:35:31.512606Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:35:31.512619Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
-[2m2025-12-05T18:35:31.795135Z[0m [32m INFO[0m [2mserver::udp[0m[2m:[0m Received JOIN from client [3mpeer[0m[2m=[0m10.40.58.169:42243 [3mlen[0m[2m=[0m34
-[HANDLE_JOIN] Called with 34 bytes from 10.40.58.169:42243
-[HANDLE_JOIN] username_len=5, offset=2
-[HANDLE_JOIN] username=alice, offset=7, data.len()=34, remaining=27
-[HANDLE_JOIN] client_port=2, offset=9
-[HANDLE_JOIN] num_images=655360, offset=13
+[WORKER-14] Started
+[2m2025-12-05T22:56:38.824286Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Follower, leader=None, successor_hint=None, Δhb=0.0s
+[2m2025-12-05T22:56:39.124116Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Sending initial discovery burst [3mnode[0m[2m=[0m1
+[LOAD] node_id=1 load=0.161 epoch_offset=2252ms
+[2m2025-12-05T22:56:41.124896Z[0m [33m WARN[0m [2mserver::election[0m[2m:[0m No leader after startup delay; starting election [3mnode[0m[2m=[0m1
+[2m2025-12-05T22:56:41.124969Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Starting election (bully) [3mnode[0m[2m=[0m1
+[2m2025-12-05T22:56:42.326653Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m No higher node claimed leadership; becoming leader [3mnode[0m[2m=[0m1
+[2m2025-12-05T22:56:42.326736Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node became leader [3mleader[0m[2m=[0m1
+[2m2025-12-05T22:56:42.326871Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m leader changed [3mleader[0m[2m=[0m1 [3mis_leader[0m[2m=[0mtrue [3mnode[0m[2m=[0m1
 ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
-[2m2025-12-05T18:35:36.511132Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=35.0s
-[LOAD] node_id=1 load=0.165 epoch_offset=39753ms
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=6001ms | loads: node_1=0.157*
+[2m2025-12-05T22:56:43.001593Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m6001
+[2m2025-12-05T22:56:43.824629Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=5.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=10001ms
+[2m2025-12-05T22:56:47.001455Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m10001
+[HISTORY] Table has 0 entries (epoch_offset=10002ms):
+  (empty)
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:56:48.824915Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=10.0s
+[2m2025-12-05T22:56:48.824937Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:56:48.825036Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:56:52.001494Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m15001
+[LOAD] node_id=1 load=0.208 epoch_offset=15001ms
+[2m2025-12-05T22:56:53.824895Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=15.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=18001ms | loads: node_1=0.173*
+[2m2025-12-05T22:56:55.001956Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m18001
+[METRICS] requests_received=0 requests_served=0 epoch_offset=20001ms
+[HISTORY] Table has 0 entries (epoch_offset=20001ms):
+  (empty)
+[2m2025-12-05T22:56:57.001088Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m20001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T22:56:58.824405Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=20.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:56:58.826173Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:56:58.826193Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:57:03.824328Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=25.0s
+[LOAD] node_id=1 load=0.183 epoch_offset=27001ms
+[HISTORY] Table has 0 entries (epoch_offset=30001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=30001ms
+[2m2025-12-05T22:57:07.001777Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m30001
+[2m2025-12-05T22:57:07.001937Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m30001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=31502ms | loads: node_1=0.161*
+[2m2025-12-05T22:57:08.502777Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m31502
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[2m2025-12-05T22:57:08.824252Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=30.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:57:08.827475Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:57:08.827517Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T22:57:13.824776Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=35.0s
+[LOAD] node_id=1 load=0.167 epoch_offset=39752ms
 [HISTORY] Table has 0 entries (epoch_offset=40001ms):
   (empty)
-[METRICS] requests_received=0 requests_served=0 epoch_offset=40001ms
-[2m2025-12-05T18:35:40.001526Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m40001
-[2m2025-12-05T18:35:41.511075Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=40.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=40002ms
+[2m2025-12-05T22:57:17.002506Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m40002
+[2m2025-12-05T22:57:18.824755Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=40.0s
 [FIREBASE-LISTENER] Starting real-time listener...
-[2m2025-12-05T18:35:41.513684Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:35:41.513734Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
-[ASSIGN] executor=node_1 lease=8000ms epoch_offset=43502ms | loads: 
-[2m2025-12-05T18:35:43.502544Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m43502
-[2m2025-12-05T18:35:45.001753Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m45001
-[2m2025-12-05T18:35:46.510823Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=45.0s
-[METRICS] requests_received=0 requests_served=0 epoch_offset=50001ms
+[2m2025-12-05T22:57:18.827880Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:57:18.827925Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=45001ms | loads: 
+[2m2025-12-05T22:57:22.001737Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m45001
+[2m2025-12-05T22:57:22.001781Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m45001
+[2m2025-12-05T22:57:23.824585Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=45.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
 [HISTORY] Table has 0 entries (epoch_offset=50001ms):
   (empty)
-[2m2025-12-05T18:35:50.001935Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m50001
-[2m2025-12-05T18:35:51.510845Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=50.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=50001ms
+[2m2025-12-05T22:57:27.001411Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m50001
+[LOAD] node_id=1 load=0.161 epoch_offset=51752ms
+[2m2025-12-05T22:57:28.824597Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=50.0s
 [FIREBASE-LISTENER] Starting real-time listener...
-[2m2025-12-05T18:35:51.514666Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:35:51.514706Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
-[LOAD] node_id=1 load=0.161 epoch_offset=51753ms
-[2m2025-12-05T18:35:56.510731Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=55.0s
+[2m2025-12-05T22:57:28.829702Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:57:28.829744Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:57:33.824206Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=55.0s
 [ASSIGN] executor=node_1 lease=8000ms epoch_offset=57001ms | loads: 
-[2m2025-12-05T18:35:57.001832Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m57001
-ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T22:57:34.001843Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m57001
+[HISTORY] Table has 0 entries (epoch_offset=60001ms):
 [METRICS] requests_received=0 requests_served=0 epoch_offset=60001ms
-[2m2025-12-05T18:36:00.001333Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m60001
-[HISTORY] Table has 0 entries (epoch_offset=60002ms):
+[2m2025-12-05T22:57:37.001871Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m60001
   (empty)
-[2m2025-12-05T18:36:00.002505Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m60002
-[2m2025-12-05T18:36:01.511266Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=60.0s
+[2m2025-12-05T22:57:37.002038Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m60002
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T22:57:38.824364Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=60.0s
 [CLIENT-ONLINE-CHECK] Checking client online status...
 [FIREBASE-LISTENER] Starting real-time listener...
-[2m2025-12-05T18:36:01.516291Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
-[2m2025-12-05T18:36:01.516355Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:57:38.830562Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:57:38.830602Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.159 epoch_offset=64503ms
+[2m2025-12-05T22:57:43.824511Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=65.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=69002ms | loads: 
+[2m2025-12-05T22:57:46.002755Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m69002
+[HISTORY] Table has 0 entries (epoch_offset=70002ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=70002ms
+[2m2025-12-05T22:57:47.002465Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m70002
+[2m2025-12-05T22:57:48.823965Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=70.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:57:48.831140Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:57:48.831178Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T22:57:52.001718Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m75001
+[2m2025-12-05T22:57:53.824571Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=75.0s
+[LOAD] node_id=1 load=0.208 epoch_offset=77253ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=80001ms
+[HISTORY] Table has 0 entries (epoch_offset=80001ms):
+  (empty)
+[2m2025-12-05T22:57:57.001589Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m80001
+[2m2025-12-05T22:57:58.824404Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=80.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:57:58.832269Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:57:58.832283Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=82501ms | loads: 
+[2m2025-12-05T22:57:59.501670Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m82501
+[2m2025-12-05T22:58:03.824325Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=85.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=90000ms
+[HISTORY] Table has 0 entries (epoch_offset=90000ms):
+  (empty)
+[2m2025-12-05T22:58:07.001045Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m90000
+[2m2025-12-05T22:58:07.002243Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m90002
+[LOAD] node_id=1 load=0.183 epoch_offset=90002ms
+[2m2025-12-05T22:58:08.824497Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=90.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:58:08.833866Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:58:08.833923Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=94502ms | loads: 
+[2m2025-12-05T22:58:11.502528Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m94502
+[2m2025-12-05T22:58:13.824948Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=95.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=100001ms
+[2m2025-12-05T22:58:17.001629Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m100001
+[HISTORY] Table has 0 entries (epoch_offset=100001ms):
+  (empty)
+[2m2025-12-05T22:58:18.824466Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=100.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:58:18.835513Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:58:18.835550Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.153 epoch_offset=102752ms
+[2m2025-12-05T22:58:22.001605Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m105001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=106502ms | loads: node_1=0.163*
+[2m2025-12-05T22:58:23.502720Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m106502
+[2m2025-12-05T22:58:23.824890Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=105.0s
+[HISTORY] Table has 0 entries (epoch_offset=110001ms):
+[METRICS] requests_received=0 requests_served=0 epoch_offset=110001ms
+  (empty)
+[2m2025-12-05T22:58:27.001235Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m110001
+[2m2025-12-05T22:58:28.824396Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=110.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:58:28.836545Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:58:28.836559Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.161 epoch_offset=114753ms
+[2m2025-12-05T22:58:33.824453Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=115.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[METRICS] requests_received=0 requests_served=0 epoch_offset=120001ms
+[2m2025-12-05T22:58:37.001711Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m120001
+[HISTORY] Table has 0 entries (epoch_offset=120001ms):
+  (empty)
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=120001ms | loads: node_1=0.168*
+[2m2025-12-05T22:58:37.001868Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m120001
+[2m2025-12-05T22:58:37.001915Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m120001
+[2m2025-12-05T22:58:38.824256Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=120.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:58:38.837664Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:58:38.837702Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:58:43.824120Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=125.0s
+[LOAD] node_id=1 load=0.151 epoch_offset=127502ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=130001ms
+[2m2025-12-05T22:58:47.001628Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m130001
+[HISTORY] Table has 0 entries (epoch_offset=130002ms):
+  (empty)
+[2m2025-12-05T22:58:48.824622Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=130.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:58:48.838486Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:58:48.838532Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=133501ms | loads: 
+[2m2025-12-05T22:58:50.501553Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m133501
+[2m2025-12-05T22:58:52.002478Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m135002
+[2m2025-12-05T22:58:53.823983Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=135.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=140001ms
+[HISTORY] Table has 0 entries (epoch_offset=140001ms):
+  (empty)
+[2m2025-12-05T22:58:57.001528Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m140001
+[LOAD] node_id=1 load=0.175 epoch_offset=140251ms
+[2m2025-12-05T22:58:58.824532Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=140.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:58:58.839512Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:58:58.839529Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=145502ms | loads: 
+[2m2025-12-05T22:59:02.502882Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m145502
+[2m2025-12-05T22:59:03.824688Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=145.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=150001ms
+[2m2025-12-05T22:59:07.001938Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m150001
+[HISTORY] Table has 0 entries (epoch_offset=150001ms):
+  (empty)
+[2m2025-12-05T22:59:07.002153Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m150002
+[2m2025-12-05T22:59:08.824026Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=150.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:59:08.840739Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:59:08.840795Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.173 epoch_offset=152251ms
+[2m2025-12-05T22:59:13.824399Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=155.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=159001ms | loads: 
+[2m2025-12-05T22:59:16.001856Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m159001
+[HISTORY] Table has 0 entries (epoch_offset=160000ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=160002ms
+[2m2025-12-05T22:59:17.002080Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m160002
+[2m2025-12-05T22:59:18.824784Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=160.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:59:18.842657Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:59:18.842690Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.169 epoch_offset=164252ms
+[2m2025-12-05T22:59:22.001603Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m165001
+[2m2025-12-05T22:59:23.824813Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=165.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=170001ms
+[2m2025-12-05T22:59:27.001343Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m170001
+[HISTORY] Table has 0 entries (epoch_offset=170002ms):
+  (empty)
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T22:59:28.824622Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=170.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:59:28.843413Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:59:28.843459Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=172501ms | loads: 
+[2m2025-12-05T22:59:29.501495Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m172501
+[LOAD] node_id=1 load=0.162 epoch_offset=176253ms
+[2m2025-12-05T22:59:33.824805Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=175.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=180001ms
+[HISTORY] Table has 0 entries (epoch_offset=180001ms):
+  (empty)
+[2m2025-12-05T22:59:37.001676Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m180001
+[2m2025-12-05T22:59:37.001813Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m180001
+[2m2025-12-05T22:59:38.824860Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=180.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:59:38.844563Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:59:38.844613Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=184501ms | loads: 
+[2m2025-12-05T22:59:41.501865Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m184501
+[2m2025-12-05T22:59:43.824114Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=185.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[LOAD] node_id=1 load=0.177 epoch_offset=189002ms
+[HISTORY] Table has 0 entries (epoch_offset=190001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=190001ms
+[2m2025-12-05T22:59:47.001479Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m190001
+[2m2025-12-05T22:59:48.824565Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=190.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:59:48.845289Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:59:48.845309Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T22:59:52.001997Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m195001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=196502ms | loads: node_1=0.193*
+[2m2025-12-05T22:59:53.502387Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m196502
+[2m2025-12-05T22:59:53.824851Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=195.0s
+[HISTORY] Table has 0 entries (epoch_offset=200001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=200001ms
+[2m2025-12-05T22:59:57.001412Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m200001
+[LOAD] node_id=1 load=0.175 epoch_offset=201002ms
+[2m2025-12-05T22:59:58.824388Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=200.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T22:59:58.846687Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T22:59:58.846735Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:00:03.824331Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=205.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=210001ms
+[HISTORY] Table has 0 entries (epoch_offset=210001ms):
+  (empty)
+[2m2025-12-05T23:00:07.001290Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m210001
+[2m2025-12-05T23:00:07.001412Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m210001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=210001ms | loads: node_1=0.175*
+[2m2025-12-05T23:00:07.001567Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m210001
+[2m2025-12-05T23:00:08.824496Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=210.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:00:08.847763Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:00:08.847800Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.195 epoch_offset=213002ms
+[2m2025-12-05T23:00:13.824768Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=215.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=220001ms
+[2m2025-12-05T23:00:17.001165Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m220001
+[HISTORY] Table has 0 entries (epoch_offset=220001ms):
+  (empty)
+[2m2025-12-05T23:00:18.824473Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=220.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:00:18.849069Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:00:18.849105Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=223501ms | loads: 
+[2m2025-12-05T23:00:20.501714Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m223501
+[2m2025-12-05T23:00:22.001889Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m225001
+[LOAD] node_id=1 load=0.183 epoch_offset=225002ms
+[2m2025-12-05T23:00:23.824403Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=225.0s
+[HISTORY] Table has 0 entries (epoch_offset=230001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=230001ms
+[2m2025-12-05T23:00:27.001480Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m230001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:00:28.824829Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=230.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:00:28.850574Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:00:28.850598Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=235502ms | loads: 
+[2m2025-12-05T23:00:32.502450Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m235502
+[2m2025-12-05T23:00:33.824574Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=235.0s
+[LOAD] node_id=1 load=0.177 epoch_offset=237003ms
+[HISTORY] Table has 0 entries (epoch_offset=240001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=240001ms
+[2m2025-12-05T23:00:37.001636Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m240001
+[2m2025-12-05T23:00:37.002849Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m240002
+[2m2025-12-05T23:00:38.824389Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=240.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:00:38.851186Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:00:38.851225Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:00:43.824745Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=245.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=249001ms | loads: node_1=0.153*
+[2m2025-12-05T23:00:46.001587Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m249001
+[LOAD] node_id=1 load=0.152 epoch_offset=249751ms
+[HISTORY] Table has 0 entries (epoch_offset=250001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=250001ms
+[2m2025-12-05T23:00:47.001488Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m250001
+[2m2025-12-05T23:00:48.824342Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=250.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:00:48.852977Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:00:48.853023Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:00:52.002508Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m255002
+[2m2025-12-05T23:00:53.824829Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=255.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=260001ms
+[HISTORY] Table has 0 entries (epoch_offset=260001ms):
+  (empty)
+[2m2025-12-05T23:00:57.001576Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m260001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=261001ms | loads: 
+[2m2025-12-05T23:00:58.001755Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m261001
+[LOAD] node_id=1 load=0.153 epoch_offset=261752ms
+[2m2025-12-05T23:00:58.824698Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=260.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:00:58.854203Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:00:58.854246Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:01:03.824754Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=265.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[METRICS] requests_received=0 requests_served=0 epoch_offset=270001ms
+[2m2025-12-05T23:01:07.001557Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m270001
+[HISTORY] Table has 0 entries (epoch_offset=270001ms):
+  (empty)
+[2m2025-12-05T23:01:07.001678Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m270001
+[2m2025-12-05T23:01:08.824271Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=270.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:01:08.855253Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:01:08.855310Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:01:11.357384Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m New client TCP connection [3mpeer_addr[0m[2m=[0m10.40.58.169:9080
+[2m2025-12-05T23:01:11.357432Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Client connection handler started [3mpeer_addr[0m[2m=[0m10.40.58.169:9080
+[2m2025-12-05T23:01:11.365062Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received JOIN from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m36
+[HANDLE_JOIN_TCP] Called with 36 bytes from 10.40.58.169:9080
+[HANDLE_JOIN_TCP] username_len=5, offset=2
+[HANDLE_JOIN_TCP] username=alice, offset=7
+[HANDLE_JOIN_TCP] client_port=9080, offset=9
+[HANDLE_JOIN_TCP] num_images=2, offset=13
+[HANDLE_JOIN_TCP] ✅ Parsed: username=alice port=9080 images=["secret.png", "cover.png"]
+[HANDLE_JOIN_TCP] Sending JOIN_ACK to 10.40.58.169:9080
+[TCP-SEND-JOIN_ACK] to 10.40.58.169:9080 len_prefix=1 total_len=1 msg_type=28 payload_len=0 bytes=[01, 00, 00, 00, 1c]
+[2m2025-12-05T23:01:12.371816Z[0m [32m INFO[0m [2mserver::executor_leader[0m[2m:[0m Client alice added to DOS-S
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=275371ms | loads: 
+[2m2025-12-05T23:01:12.371960Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m275371
+[HANDLE_JOIN_TCP] ✅ Client alice registered successfully
+[LOAD] node_id=1 load=0.154 epoch_offset=275372ms
+[2m2025-12-05T23:01:13.824466Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=275.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=280001ms
+[HISTORY] Table has 0 entries (epoch_offset=280001ms):
+  (empty)
+[2m2025-12-05T23:01:17.001414Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m280001
+[2m2025-12-05T23:01:18.824398Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=280.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:01:18.856016Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:01:18.856068Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:01:21.467506Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:01:21.467683Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:01:22.001679Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m285001
+[2m2025-12-05T23:01:23.824772Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=285.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=288001ms | loads: 
+[2m2025-12-05T23:01:25.001576Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m288001
+[LOAD] node_id=1 load=0.213 epoch_offset=288004ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=290001ms
+[HISTORY] Table has 0 entries (epoch_offset=290001ms):
+  (empty)
+[2m2025-12-05T23:01:27.001284Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m290001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:01:28.824570Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=290.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:01:28.857097Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:01:28.857148Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:01:31.466721Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:01:31.466774Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:01:33.824206Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=295.0s
+[HISTORY] Table has 0 entries (epoch_offset=300001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=300001ms
+[2m2025-12-05T23:01:37.001411Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m300001
+[2m2025-12-05T23:01:37.001463Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m300001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=300002ms | loads: 
+[2m2025-12-05T23:01:37.002899Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m300002
+[LOAD] node_id=1 load=0.270 epoch_offset=300752ms
+[2m2025-12-05T23:01:38.824768Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=300.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:01:38.858505Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:01:38.858570Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:01:41.558996Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:01:41.559147Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:01:43.824771Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=305.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=310001ms
+[HISTORY] Table has 0 entries (epoch_offset=310001ms):
+  (empty)
+[2m2025-12-05T23:01:47.001595Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m310001
+[2m2025-12-05T23:01:48.824118Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=310.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:01:48.859649Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:01:48.859700Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.186 epoch_offset=312752ms
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=313501ms | loads: 
+[2m2025-12-05T23:01:50.501648Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m313501
+[2m2025-12-05T23:01:51.429537Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:01:51.429715Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:01:52.001947Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m315001
+[2m2025-12-05T23:01:53.824371Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=315.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[METRICS] requests_received=0 requests_served=0 epoch_offset=320001ms
+[HISTORY] Table has 0 entries (epoch_offset=320001ms):
+  (empty)
+[2m2025-12-05T23:01:57.001523Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m320001
+[2m2025-12-05T23:01:58.824063Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=320.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:01:58.860560Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:01:58.860605Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:02:01.466897Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:02:01.467059Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=325501ms | loads: 
+[2m2025-12-05T23:02:02.501976Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m325501
+[LOAD] node_id=1 load=0.193 epoch_offset=325503ms
+[2m2025-12-05T23:02:03.824394Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=325.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=330001ms
+[HISTORY] Table has 0 entries (epoch_offset=330001ms):
+[2m2025-12-05T23:02:07.001486Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m330001
+  (empty)
+[2m2025-12-05T23:02:07.001618Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m330001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:02:08.824767Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=330.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:02:08.861669Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:02:08.861718Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:02:11.563793Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:02:11.563964Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:02:13.824694Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=335.0s
+[LOAD] node_id=1 load=0.196 epoch_offset=338252ms
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=339001ms | loads: node_1=0.196*
+[2m2025-12-05T23:02:16.002085Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m339001
+[METRICS] requests_received=0 requests_served=0 epoch_offset=340001ms
+[HISTORY] Table has 0 entries (epoch_offset=340001ms):
+  (empty)
+[2m2025-12-05T23:02:17.001569Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m340001
+[2m2025-12-05T23:02:18.824181Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=340.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:02:18.862801Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:02:18.862853Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:02:21.472622Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:02:21.472781Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:02:22.001935Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m345001
+[2m2025-12-05T23:02:23.824487Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=345.0s
+[HISTORY] Table has 0 entries (epoch_offset=350001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=350001ms
+[2m2025-12-05T23:02:27.001458Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m350001
+[LOAD] node_id=1 load=0.193 epoch_offset=350252ms
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=351003ms | loads: 
+[2m2025-12-05T23:02:28.003200Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m351003
+[2m2025-12-05T23:02:28.824555Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=350.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:02:28.864117Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:02:28.864161Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:02:31.470926Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:02:31.470976Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:02:33.824103Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=355.0s
+[HISTORY] Table has 0 entries (epoch_offset=360000ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=360001ms
+[2m2025-12-05T23:02:37.001033Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m360001
+[2m2025-12-05T23:02:37.001066Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m360001
+[2m2025-12-05T23:02:38.824229Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=360.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:02:38.865380Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:02:38.865426Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.255 epoch_offset=362253ms
+[2m2025-12-05T23:02:41.445034Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:02:41.445199Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=364502ms | loads: 
+[2m2025-12-05T23:02:41.502818Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m364502
+[2m2025-12-05T23:02:43.824559Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=365.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=370001ms
+[HISTORY] Table has 0 entries (epoch_offset=370001ms):
+  (empty)
+[2m2025-12-05T23:02:47.001845Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m370001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:02:48.824882Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=370.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:02:48.866504Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:02:48.866554Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:02:51.671974Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:02:51.672168Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:02:52.001986Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m375001
+[LOAD] node_id=1 load=0.206 epoch_offset=375003ms
+[2m2025-12-05T23:02:53.824863Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=375.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=378001ms | loads: node_1=0.204*
+[2m2025-12-05T23:02:55.002038Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m378001
+[HISTORY] Table has 0 entries (epoch_offset=380002ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=380002ms
+[2m2025-12-05T23:02:57.002969Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m380002
+[2m2025-12-05T23:02:58.824361Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=380.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:02:58.867116Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:02:58.867161Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:03:01.448228Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:03:01.448471Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:03:03.824467Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=385.0s
+[LOAD] node_id=1 load=0.176 epoch_offset=387003ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=390001ms
+[2m2025-12-05T23:03:07.001573Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m390001
+[2m2025-12-05T23:03:07.001620Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m390001
+[HISTORY] Table has 0 entries (epoch_offset=390002ms):
+  (empty)
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=391501ms | loads: 
+[2m2025-12-05T23:03:08.501741Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m391501
+[2m2025-12-05T23:03:08.824749Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=390.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:03:08.868536Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:03:08.868591Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:03:11.445658Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:03:11.445943Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:03:13.824445Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=395.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[LOAD] node_id=1 load=0.177 epoch_offset=399003ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=400001ms
+[2m2025-12-05T23:03:17.001601Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m400001
+[HISTORY] Table has 0 entries (epoch_offset=400002ms):
+  (empty)
+[2m2025-12-05T23:03:18.824493Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=400.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:03:18.869501Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:03:18.869552Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:03:21.480846Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:03:21.481019Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:03:22.001548Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m405001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=405001ms | loads: 
+[2m2025-12-05T23:03:22.001726Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m405001
+[2m2025-12-05T23:03:23.824235Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=405.0s
+[HISTORY] Table has 0 entries (epoch_offset=410001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=410001ms
+[2m2025-12-05T23:03:27.001344Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m410001
+[LOAD] node_id=1 load=0.176 epoch_offset=411752ms
+[2m2025-12-05T23:03:28.824528Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=410.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:03:28.870885Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:03:28.870928Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:03:31.449457Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:03:31.449507Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:03:33.824202Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=415.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=418501ms | loads: 
+[2m2025-12-05T23:03:35.501397Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m418501
+[METRICS] requests_received=0 requests_served=0 epoch_offset=420001ms
+[HISTORY] Table has 0 entries (epoch_offset=420001ms):
+  (empty)
+[2m2025-12-05T23:03:37.001663Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m420001
+[2m2025-12-05T23:03:37.001789Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m420001
+[2m2025-12-05T23:03:38.824873Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=420.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:03:38.871910Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:03:38.871951Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.172 epoch_offset=423752ms
+[2m2025-12-05T23:03:41.523853Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:03:41.524008Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:03:43.824426Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=425.0s
+[HISTORY] Table has 0 entries (epoch_offset=430001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=430001ms
+[2m2025-12-05T23:03:47.001992Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m430001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=430501ms | loads: 
+[2m2025-12-05T23:03:47.501611Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m430501
+[2m2025-12-05T23:03:48.824032Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=430.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:03:48.873722Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:03:48.873766Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:03:51.679944Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:03:51.680108Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:03:52.002021Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m435002
+[LOAD] node_id=1 load=0.191 epoch_offset=436502ms
+[2m2025-12-05T23:03:53.824085Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=435.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=440001ms
+[2m2025-12-05T23:03:57.001441Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m440001
+[HISTORY] Table has 0 entries (epoch_offset=440002ms):
+  (empty)
+[2m2025-12-05T23:03:58.824089Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=440.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:03:58.874868Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:03:58.874919Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=444002ms | loads: 
+[2m2025-12-05T23:04:01.002130Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m444002
+[2m2025-12-05T23:04:01.482091Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:04:01.482256Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:04:03.824501Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=445.0s
+[LOAD] node_id=1 load=0.179 epoch_offset=448503ms
+[HISTORY] Table has 0 entries (epoch_offset=450001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=450002ms
+[2m2025-12-05T23:04:07.002051Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m450002
+[2m2025-12-05T23:04:07.002051Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m450002
+[2m2025-12-05T23:04:08.824502Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=450.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:04:08.876023Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:04:08.876074Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:04:11.517028Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:04:11.517199Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:04:13.823955Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=455.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=457501ms | loads: 
+[2m2025-12-05T23:04:14.502056Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m457501
+[METRICS] requests_received=0 requests_served=0 epoch_offset=460001ms
+[2m2025-12-05T23:04:17.001670Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m460001
+[HISTORY] Table has 0 entries (epoch_offset=460002ms):
+  (empty)
+[LOAD] node_id=1 load=0.191 epoch_offset=461252ms
+[2m2025-12-05T23:04:18.824483Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=460.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:04:18.877773Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:04:18.877826Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:04:21.694668Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:04:21.694833Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:04:22.001706Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m465001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:04:23.824000Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=465.0s
+[HISTORY] Table has 0 entries (epoch_offset=470001ms):
+[METRICS] requests_received=0 requests_served=0 epoch_offset=470001ms
+  (empty)
+[2m2025-12-05T23:04:27.002016Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m470001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=471001ms | loads: 
+[2m2025-12-05T23:04:28.001355Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m471001
+[2m2025-12-05T23:04:28.824193Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=470.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:04:28.879111Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:04:28.879159Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.197 epoch_offset=473254ms
+[2m2025-12-05T23:04:31.487547Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Received CLIENT_PING from client [3mpeer_addr[0m[2m=[0m10.40.58.169:9080 [3mlen[0m[2m=[0m7
+[2m2025-12-05T23:04:31.487593Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m [TCP-SEND] response [3mpeer[0m[2m=[0mSome(10.40.58.169:9080) [3mlen_prefix[0m[2m=[0m5 [3mtotal_len[0m[2m=[0m5 [3mmsg_type[0m[2m=[0m51 [3mpayload_len[0m[2m=[0m4 [3mbytes[0m[2m=[0m[5, 0, 0, 0, 51, 2, 0, 0, 0]
+[TCP-SEND] to 10.40.58.169:9080 len_prefix=5 total_len=5 msg_type=51 payload_len=4 bytes=[05, 00, 00, 00, 33, 02, 00, 00, 00]
+[PING] alice (DOS version=2)
+[2m2025-12-05T23:04:33.824456Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=475.0s
+[2m2025-12-05T23:04:35.123804Z[0m [32m INFO[0m [2mserver::tcp_client[0m[2m:[0m Client disconnected [3mpeer_addr[0m[2m=[0m10.40.58.169:9080
+[METRICS] requests_received=0 requests_served=0 epoch_offset=480001ms
+[HISTORY] Table has 0 entries (epoch_offset=480001ms):
+[2m2025-12-05T23:04:37.001166Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m480001
+  (empty)
+[2m2025-12-05T23:04:37.002441Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m480002
+[2m2025-12-05T23:04:38.824003Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=480.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:04:38.880635Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:04:38.880677Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=483001ms | loads: 
+[2m2025-12-05T23:04:40.001637Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m483001
+[LOAD] node_id=1 load=0.228 epoch_offset=486003ms
+[2m2025-12-05T23:04:43.824541Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=485.0s
+[HISTORY] Table has 0 entries (epoch_offset=490001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=490001ms
+[2m2025-12-05T23:04:47.001944Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m490001
+[2m2025-12-05T23:04:48.824500Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=490.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:04:48.881833Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:04:48.881878Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:04:52.001727Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m495001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=496501ms | loads: 
+[2m2025-12-05T23:04:53.501502Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m496501
+[2m2025-12-05T23:04:53.824757Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=495.0s
+[LOAD] node_id=1 load=0.210 epoch_offset=498004ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=500002ms
+[HISTORY] Table has 0 entries (epoch_offset=500002ms):
+  (empty)
+[2m2025-12-05T23:04:57.002381Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m500002
+[2m2025-12-05T23:04:58.824164Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=500.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:04:58.882978Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:04:58.883019Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:05:03.824385Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=505.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=510001ms
+[HISTORY] Table has 0 entries (epoch_offset=510001ms):
+  (empty)
+[2m2025-12-05T23:05:07.001292Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m510001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=510001ms | loads: node_1=0.183*
+[2m2025-12-05T23:05:07.001526Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m510001
+[2m2025-12-05T23:05:07.002762Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m510002
+[LOAD] node_id=1 load=0.208 epoch_offset=510753ms
+[2m2025-12-05T23:05:08.823882Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=510.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:05:08.884426Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:05:08.884440Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:05:13.824728Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=515.0s
+[HISTORY] Table has 0 entries (epoch_offset=520001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=520001ms
+[2m2025-12-05T23:05:17.001520Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m520001
+[2m2025-12-05T23:05:18.824433Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=520.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:05:18.885078Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:05:18.885131Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=523501ms | loads: 
+[2m2025-12-05T23:05:20.501693Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m523501
+[LOAD] node_id=1 load=0.196 epoch_offset=523502ms
+[2m2025-12-05T23:05:22.001958Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m525001
+[2m2025-12-05T23:05:23.824178Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=525.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[HISTORY] Table has 0 entries (epoch_offset=530001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=530001ms
+[2m2025-12-05T23:05:27.001823Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m530001
+[2m2025-12-05T23:05:28.824597Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=530.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:05:28.886823Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:05:28.886866Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=535502ms | loads: 
+[2m2025-12-05T23:05:32.502101Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m535502
+[LOAD] node_id=1 load=0.191 epoch_offset=535503ms
+[2m2025-12-05T23:05:33.824471Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=535.0s
+[HISTORY] Table has 0 entries (epoch_offset=540000ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=540008ms
+[2m2025-12-05T23:05:37.009007Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m540008
+[2m2025-12-05T23:05:37.009021Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m540009
+[2m2025-12-05T23:05:38.824266Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=540.0s
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[CLIENT-ONLINE-CHECK] Client alice is offline (no ping for 45s) - removing from DOS
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:05:38.888321Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:05:38.888364Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:05:39.361631Z[0m [32m INFO[0m [2mserver::executor_leader[0m[2m:[0m Client alice removed from DOS-S
+[CLIENT-ONLINE-CHECK] ✅ DELETE_CLIENT sent to leader for alice
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:05:43.824206Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=545.0s
+[LOAD] node_id=1 load=0.191 epoch_offset=548252ms
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=549001ms | loads: 
+[2m2025-12-05T23:05:46.001418Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m549001
+[METRICS] requests_received=0 requests_served=0 epoch_offset=550001ms
+[2m2025-12-05T23:05:47.001760Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m550001
+[HISTORY] Table has 0 entries (epoch_offset=550002ms):
+  (empty)
+[2m2025-12-05T23:05:48.824249Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=550.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:05:48.889414Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:05:48.889463Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:05:52.001910Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m555001
+[2m2025-12-05T23:05:53.824085Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=555.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[METRICS] requests_received=0 requests_served=0 epoch_offset=560002ms
+[HISTORY] Table has 0 entries (epoch_offset=560002ms):
+  (empty)
+[2m2025-12-05T23:05:57.002438Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m560002
+[LOAD] node_id=1 load=0.198 epoch_offset=560252ms
+[2m2025-12-05T23:05:58.824789Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=560.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:05:58.890667Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:05:58.890708Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=562501ms | loads: node_1=0.193*
+[2m2025-12-05T23:05:59.501918Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m562501
+[2m2025-12-05T23:06:03.824456Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=565.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=570001ms
+[HISTORY] Table has 0 entries (epoch_offset=570001ms):
+  (empty)
+[2m2025-12-05T23:06:07.001319Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m570001
+[2m2025-12-05T23:06:07.002656Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m570002
+[2m2025-12-05T23:06:08.824847Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=570.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:06:08.891501Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:06:08.891546Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[LOAD] node_id=1 load=0.177 epoch_offset=573003ms
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=576001ms | loads: 
+[2m2025-12-05T23:06:13.002025Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m576001
+[2m2025-12-05T23:06:13.824038Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=575.0s
+[HISTORY] Table has 0 entries (epoch_offset=580001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=580001ms
+[2m2025-12-05T23:06:17.001185Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m580001
+[2m2025-12-05T23:06:18.824453Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=580.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:06:18.891993Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:06:18.892041Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:06:22.001583Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m585001
+[LOAD] node_id=1 load=0.196 epoch_offset=585753ms
+[2m2025-12-05T23:06:23.824880Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=585.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=589501ms | loads: 
+[2m2025-12-05T23:06:26.501505Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m589501
+[HISTORY] Table has 0 entries (epoch_offset=590001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=590001ms
+[2m2025-12-05T23:06:27.001767Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m590001
+[2m2025-12-05T23:06:28.824624Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=590.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:06:28.893435Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:06:28.893478Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[2m2025-12-05T23:06:33.824217Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=595.0s
+[LOAD] node_id=1 load=0.183 epoch_offset=598502ms
+[HISTORY] Table has 0 entries (epoch_offset=600001ms):
+[METRICS] requests_received=0 requests_served=0 epoch_offset=600001ms
+[2m2025-12-05T23:06:37.001972Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m600001
+  (empty)
+[2m2025-12-05T23:06:37.002007Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m600001
+[2m2025-12-05T23:06:38.824205Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=600.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:06:38.894261Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:06:38.894314Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=603001ms | loads: 
+[2m2025-12-05T23:06:40.001688Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m603001
+[2m2025-12-05T23:06:43.824235Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=605.0s
+[HISTORY] Table has 0 entries (epoch_offset=610001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=610001ms
+[2m2025-12-05T23:06:47.001848Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m610001
+[LOAD] node_id=1 load=0.182 epoch_offset=610502ms
+[2m2025-12-05T23:06:48.824375Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=610.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:06:48.895375Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:06:48.895416Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=615002ms | loads: node_1=0.178*
+[2m2025-12-05T23:06:52.002008Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m615002
+[2m2025-12-05T23:06:52.002021Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m615002
+[2m2025-12-05T23:06:53.824774Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=615.0s
+[HISTORY] Table has 0 entries (epoch_offset=620002ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=620002ms
+[2m2025-12-05T23:06:57.002913Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m620002
+[2m2025-12-05T23:06:58.824219Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=620.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:06:58.896195Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:06:58.896244Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.170 epoch_offset=623251ms
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:07:03.824806Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=625.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=628502ms | loads: 
+[2m2025-12-05T23:07:05.502932Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m628502
+[2m2025-12-05T23:07:07.001521Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m630001
+[METRICS] requests_received=0 requests_served=0 epoch_offset=630002ms
+[2m2025-12-05T23:07:07.002295Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m630002
+[HISTORY] Table has 0 entries (epoch_offset=630002ms):
+  (empty)
+[2m2025-12-05T23:07:08.824903Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=630.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:07:08.897553Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:07:08.897603Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[LOAD] node_id=1 load=0.177 epoch_offset=635253ms
+[2m2025-12-05T23:07:13.824602Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=635.0s
+[HISTORY] Table has 0 entries (epoch_offset=640001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=640001ms
+[2m2025-12-05T23:07:17.001483Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m640001
+[2m2025-12-05T23:07:18.824776Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=640.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:07:18.898864Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:07:18.898907Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=642001ms | loads: 
+[2m2025-12-05T23:07:19.001207Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m642001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[2m2025-12-05T23:07:22.002008Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m645002
+[2m2025-12-05T23:07:23.824088Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=645.0s
+[LOAD] node_id=1 load=0.189 epoch_offset=647253ms
+[HISTORY] Table has 0 entries (epoch_offset=650001ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=650001ms
+[2m2025-12-05T23:07:27.001251Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m650001
+[2m2025-12-05T23:07:28.824554Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=650.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:07:28.900058Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:07:28.900105Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=654002ms | loads: 
+[2m2025-12-05T23:07:31.002106Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m654002
+[2m2025-12-05T23:07:33.824786Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=655.0s
+[HISTORY] Table has 0 entries (epoch_offset=660001ms):
+[METRICS] requests_received=0 requests_served=0 epoch_offset=660001ms
+  (empty)
+[2m2025-12-05T23:07:37.001874Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m660001
+[2m2025-12-05T23:07:37.001918Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m660001
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[LOAD] node_id=1 load=0.179 epoch_offset=660003ms
+[2m2025-12-05T23:07:38.824062Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=660.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:07:38.901167Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:07:38.901215Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[2m2025-12-05T23:07:43.824530Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=665.0s
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=667501ms | loads: 
+[2m2025-12-05T23:07:44.501685Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m667501
+[HISTORY] Table has 0 entries (epoch_offset=670002ms):
+  (empty)
+[METRICS] requests_received=0 requests_served=0 epoch_offset=670002ms
+[2m2025-12-05T23:07:47.002727Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m670002
+[2m2025-12-05T23:07:48.824039Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=670.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:07:48.902635Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:07:48.902676Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.187 epoch_offset=672752ms
+[2m2025-12-05T23:07:52.001953Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m675001
+[2m2025-12-05T23:07:53.824253Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=675.0s
+ASSIGN received from 10.40.61.79:8280 | leader_id=1 executor_ip=10.40.61.79 lease_ms=8000
+[METRICS] requests_received=0 requests_served=0 epoch_offset=680001ms
+[HISTORY] Table has 0 entries (epoch_offset=680001ms):
+  (empty)
+[2m2025-12-05T23:07:57.001219Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m680001
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=681001ms | loads: 
+[2m2025-12-05T23:07:58.001865Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m681001
+[2m2025-12-05T23:07:58.824003Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=680.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:07:58.903281Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:07:58.903360Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[LOAD] node_id=1 load=0.174 epoch_offset=685502ms
+[2m2025-12-05T23:08:03.824322Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=685.0s
+[METRICS] requests_received=0 requests_served=0 epoch_offset=690001ms
+[HISTORY] Table has 0 entries (epoch_offset=690001ms):
+  (empty)
+[2m2025-12-05T23:08:07.001940Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m690001
+[2m2025-12-05T23:08:07.002055Z[0m [32m INFO[0m [2mserver::history[0m[2m:[0m TABLE_UPDATE broadcast by leader (epoch-aligned) [3mrecords_count[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m690002
+[2m2025-12-05T23:08:08.824257Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=690.0s
+[FIREBASE-LISTENER] Starting real-time listener...
+[2m2025-12-05T23:08:08.904760Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Starting Firebase real-time listener...
+[2m2025-12-05T23:08:08.904814Z[0m [32m INFO[0m [2mserver::firebase[0m[2m:[0m Firebase listeners started
+[CLIENT-ONLINE-CHECK] Checking client online status...
+[ASSIGN] executor=node_1 lease=8000ms epoch_offset=694501ms | loads: 
+[2m2025-12-05T23:08:11.501495Z[0m [32m INFO[0m [2mserver::assignment[0m[2m:[0m ASSIGN broadcast sent with load-based selection (epoch-aligned) [3mleader_id[0m[2m=[0m1 [3mexecutor_id[0m[2m=[0m1 [3mexec_ip[0m[2m=[0m10.40.61.79 [3mlease_ms[0m[2m=[0m8000 [3mepoch_offset[0m[2m=[0m694501
+[2m2025-12-05T23:08:13.824704Z[0m [32m INFO[0m [2mserver::election[0m[2m:[0m Node 1: Leader, leader=Some(1), successor=None, active=1, followers=[], Δhb=695.0s
+[LOAD] node_id=1 load=0.188 epoch_offset=698252ms
+[METRICS] requests_received=0 requests_served=0 epoch_offset=700001ms
+[HISTORY] Table has 0 entries (epoch_offset=700001ms):
+  (empty)
+[2m2025-12-05T23:08:17.001431Z[0m [32m INFO[0m [2mserver[0m[2m:[0m metrics (epoch-aligned) [3mrequests_received[0m[2m=[0m0 [3mrequests_served[0m[2m=[0m0 [3mepoch_offset[0m[2m=[0m700001

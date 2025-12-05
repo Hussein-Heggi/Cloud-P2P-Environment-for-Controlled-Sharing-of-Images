@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::net::{SocketAddr, IpAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
@@ -293,7 +293,7 @@ pub async fn handle_client_ping(
     let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
     let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
 
-    let now = now_ms();
+    let now = now_ms() as u64;
 
     // Update last_seen
     let mut s = state.write().await;

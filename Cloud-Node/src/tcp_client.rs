@@ -50,7 +50,7 @@ pub async fn run_tcp_client_server(
 
 /// Handle a single client TCP connection
 async fn handle_client_connection(
-    mut stream: TcpStream,
+    stream: TcpStream,
     peer_addr: SocketAddr,
     state: SharedState,
     cfg: Config,
@@ -106,23 +106,19 @@ async fn handle_client_connection(
         let msg_type = data[0];
         let payload = data[1..].to_vec(); // Clone payload for 'static lifetime
 
-        // Route message to appropriate handler
-        let state_clone = state.clone();
-        let cfg_clone = cfg.clone();
-        let stream_clone = stream.clone();
-
-        tokio::spawn(async move {
-            if let Err(e) = route_client_message(
-                msg_type,
-                &payload,
-                peer_addr,
-                state_clone,
-                cfg_clone,
-                stream_clone,
-            ).await {
-                warn!(%peer_addr, msg_type, error=%e, "Message handler error");
-            }
-        });
+        // Route message to appropriate handler synchronously so responses are sent
+        // on the same task without any scheduling delay/races.
+        if let Err(e) = route_client_message(
+            msg_type,
+            &payload,
+            peer_addr,
+            state.clone(),
+            cfg.clone(),
+            stream.clone(),
+        ).await {
+            warn!(%peer_addr, msg_type, error=%e, "Message handler error");
+            break;
+        }
     }
 
     Ok(())
@@ -200,6 +196,27 @@ async fn send_tcp_response(
     s.write_all(&msg).await?;
     s.flush().await?;
 
+    // Structured log (shows up in output.txt) with exact bytes written
+    let len_prefix = u32::from_le_bytes(msg[0..4].try_into().unwrap());
+    info!(
+        peer=?s.peer_addr().ok(),
+        len_prefix,
+        total_len,
+        msg_type,
+        payload_len=payload.len(),
+        bytes=?msg,
+        "[TCP-SEND] response"
+    );
+    println!(
+        "[TCP-SEND] to {} len_prefix={} total_len={} msg_type={} payload_len={} bytes={:02x?}",
+        s.peer_addr().unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0))),
+        len_prefix,
+        total_len,
+        msg_type,
+        payload.len(),
+        msg
+    );
+
     Ok(())
 }
 
@@ -208,7 +225,7 @@ async fn send_tcp_response(
 async fn handle_req_tcp(
     state: SharedState,
     cfg: &Config,
-    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
@@ -282,7 +299,7 @@ async fn handle_join_tcp(
     // Register client in state
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
+        .as_millis() as u64;
 
     {
         let mut s = state.write().await;
@@ -302,7 +319,26 @@ async fn handle_join_tcp(
 
     // Send JOIN_ACK
     println!("[HANDLE_JOIN_TCP] Sending JOIN_ACK to {}", peer_addr);
-    send_tcp_response(stream, client_protocol::JOIN_ACK, &[]).await?;
+    {
+        // Manual send to ensure visibility and remove ambiguity
+        let mut msg = Vec::new();
+        let total_len: u32 = 1; // msg_type only, no payload
+        msg.extend(total_len.to_le_bytes());
+        msg.push(client_protocol::JOIN_ACK);
+
+        let mut s = stream.lock().await;
+        s.write_all(&msg).await?;
+        s.flush().await?;
+
+        println!(
+            "[TCP-SEND-JOIN_ACK] to {} len_prefix={} total_len={} msg_type={} payload_len=0 bytes={:02x?}",
+            s.peer_addr().unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0))),
+            total_len,
+            total_len,
+            client_protocol::JOIN_ACK,
+            msg
+        );
+    }
 
     // Notify leader to write to Firebase
     if let Err(e) = notify_leader_add_client(cfg, &username, peer_addr.ip().to_string(), client_port, images).await {
@@ -334,7 +370,7 @@ async fn handle_client_ping_tcp(
     // Update last seen
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
+        .as_millis() as u64;
 
     let dos_version = {
         let mut s = state.write().await;
@@ -357,7 +393,7 @@ async fn handle_client_ping_tcp(
 async fn handle_view_request_tcp(
     state: SharedState,
     cfg: &Config,
-    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
@@ -367,7 +403,7 @@ async fn handle_view_request_tcp(
 
 async fn handle_deny_view_tcp(
     state: SharedState,
-    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
@@ -376,8 +412,8 @@ async fn handle_deny_view_tcp(
 }
 
 async fn handle_approve_view_tcp(
-    state: SharedState,
-    cfg: &Config,
+    _state: SharedState,
+    _cfg: &Config,
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
@@ -393,6 +429,8 @@ async fn handle_approve_view_tcp(
 
     // TODO: Find pending request and send APPROVED to viewer
     // For now, just acknowledge
+    let mut s = stream.lock().await;
+    let _ = s;
 
     Ok(())
 }
@@ -400,7 +438,7 @@ async fn handle_approve_view_tcp(
 async fn handle_sync_usage_tcp(
     state: SharedState,
     cfg: &Config,
-    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {

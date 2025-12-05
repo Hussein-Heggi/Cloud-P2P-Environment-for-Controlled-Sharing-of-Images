@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 mod protocol;
 mod simple_client;
 
-use simple_client::{ClientState, SharedClientState};
+use simple_client::{ClientState, SharedClientState, CLIENT_PORT};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,31 +71,22 @@ async fn run_join_mode(
     println!("=== CLIENT JOIN MODE (TCP) ===");
     println!("Username: {}", username);
     println!("Server: {}", server_addr);
+    println!("Client port: {}", CLIENT_PORT);
     println!("Images: {:?}", images);
     println!();
 
     // Initialize state
     let mut state = ClientState::new(username.clone(), server_addr);
     state.images = images;
+    state.client_port = CLIENT_PORT;
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
     // Connect to server via TCP
-    let stream = simple_client::connect_to_server(server_addr).await?;
+    let (mut reader, writer) = simple_client::connect_to_server(server_addr).await?;
     println!();
 
-    // Start listener task
-    let listener_task = {
-        let state_clone = state.clone();
-        let stream_clone = stream.clone();
-        tokio::spawn(async move {
-            if let Err(e) = simple_client::run_listener(state_clone, stream_clone).await {
-                println!("[CLIENT-LISTENER] Error: {}", e);
-            }
-        })
-    };
-
-    // Send JOIN
-    if let Err(e) = simple_client::join_server(state.clone(), stream.clone()).await {
+    // Send JOIN (no listener yet, to avoid racing on the socket)
+    if let Err(e) = simple_client::join_server(state.clone(), writer.clone(), &mut reader).await {
         println!("[CLIENT] ⚠️  JOIN failed: {}", e);
         return Ok(());
     }
@@ -104,12 +95,24 @@ async fn run_join_mode(
     println!("[CLIENT] Starting ping loop (every 10 seconds)...");
     println!();
 
+    // Start listener task AFTER JOIN is complete (sole reader for the socket)
+    let listener_task = {
+        let state_clone = state.clone();
+        let reader_clone = reader;
+        let writer_clone = writer.clone();
+        tokio::spawn(async move {
+            if let Err(e) = simple_client::run_listener(state_clone, reader_clone, writer_clone).await {
+                println!("[CLIENT-LISTENER] Error: {}", e);
+            }
+        })
+    };
+
     // Start ping loop
     let ping_task = {
         let state_clone = state.clone();
-        let stream_clone = stream.clone();
+        let writer_clone = writer.clone();
         tokio::spawn(async move {
-            if let Err(e) = simple_client::ping_loop(state_clone, stream_clone).await {
+            if let Err(e) = simple_client::ping_loop(state_clone, writer_clone).await {
                 println!("[CLIENT-PING] Error: {}", e);
             }
         })
@@ -143,13 +146,13 @@ async fn run_listen_mode(
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
     // Connect to server via TCP
-    let stream = simple_client::connect_to_server(server_addr).await?;
+    let (reader, writer) = simple_client::connect_to_server(server_addr).await?;
 
     println!("[CLIENT] Listening for messages from server...");
     println!();
 
     // Run listener
-    simple_client::run_listener(state, stream).await?;
+    simple_client::run_listener(state, reader, writer).await?;
 
     Ok(())
 }

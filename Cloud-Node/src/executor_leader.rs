@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use std::net::SocketAddr;
 use tokio::net::UdpSocket;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::state::SharedState;
@@ -127,7 +126,7 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
+        .as_millis() as u64;
 
     let client = DosClient {
         client_name: username.clone(),
@@ -193,7 +192,7 @@ async fn handle_add_access(state: SharedState, data: &[u8]) -> Result<()> {
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
+        .as_millis() as u64;
 
     let access = DosAccess {
         owner,

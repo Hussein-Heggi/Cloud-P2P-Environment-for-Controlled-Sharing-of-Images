@@ -14,7 +14,7 @@ pub struct DosClient {
     pub client_ip: String,
     pub client_port: u16,
     pub images: Vec<String>,
-    pub last_seen: u128,
+    pub last_seen: u64, // use u64 for Firestore compatibility
     pub online: bool,
 }
 
@@ -27,7 +27,7 @@ pub struct DosAccess {
     pub granted_views: u32,
     pub consumed_views: u32,
     pub revoked: bool,
-    pub granted_at: u128,
+    pub granted_at: u64, // use u64 for Firestore compatibility
     pub image_uuid: String,
 }
 
@@ -95,16 +95,36 @@ pub async fn init_firestore() -> Result<FirestoreDb> {
 pub async fn write_client(db: &FirestoreDb, client: &DosClient) -> Result<()> {
     debug!("Writing client {} to Firebase", client.client_name);
 
-    db.fluent()
+    // Try update first; if doc does not exist, fallback to insert.
+    match db
+        .fluent()
         .update()
         .in_col("dos_s_clients")
         .document_id(&client.client_name)
         .object(client)
-        .execute()
+        .execute::<()>()
         .await
-        .context("Failed to write client to Firebase")?;
+    {
+        Ok(_) => {
+            debug!("Client {} written successfully (update)", client.client_name);
+        }
+        Err(e) => {
+            warn!(
+                "Update failed for client {} (likely missing doc), retrying with insert: {}",
+                client.client_name, e
+            );
+            db.fluent()
+                .insert()
+                .into("dos_s_clients")
+                .document_id(&client.client_name)
+                .object(client)
+                .execute::<()>()
+                .await
+                .context("Failed to insert client to Firebase")?;
+            debug!("Client {} written successfully (insert)", client.client_name);
+        }
+    }
 
-    debug!("Client {} written successfully", client.client_name);
     Ok(())
 }
 
@@ -128,16 +148,36 @@ pub async fn delete_client(db: &FirestoreDb, client_name: &str) -> Result<()> {
 pub async fn write_access(db: &FirestoreDb, access_id: &str, access: &DosAccess) -> Result<()> {
     debug!("Writing access {} to Firebase", access_id);
 
-    db.fluent()
+    // Try update first; if doc does not exist, fallback to insert.
+    match db
+        .fluent()
         .update()
         .in_col("dos_s_access")
         .document_id(access_id)
         .object(access)
-        .execute()
+        .execute::<()>()
         .await
-        .context("Failed to write access to Firebase")?;
+    {
+        Ok(_) => {
+            debug!("Access {} written successfully (update)", access_id);
+        }
+        Err(e) => {
+            warn!(
+                "Update failed for access {} (likely missing doc), retrying with insert: {}",
+                access_id, e
+            );
+            db.fluent()
+                .insert()
+                .into("dos_s_access")
+                .document_id(access_id)
+                .object(access)
+                .execute::<()>()
+                .await
+                .context("Failed to insert access to Firebase")?;
+            debug!("Access {} written successfully (insert)", access_id);
+        }
+    }
 
-    debug!("Access {} written successfully", access_id);
     Ok(())
 }
 
@@ -253,17 +293,17 @@ async fn listen_access_collection(_db: FirestoreDb, _state: SharedState) -> Resu
 /// Cleanup expired access records (called periodically)
 /// Deletes access records older than 5 hours where consumed >= granted or revoked
 pub async fn cleanup_expired_access(db: &FirestoreDb, state: SharedState) -> Result<()> {
-    let now = std::time::SystemTime::now()
+    let now: u128 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis();
 
-    let five_hours_ms = 5 * 60 * 60 * 1000; // 5 hours in milliseconds
+    let five_hours_ms: u128 = 5 * 60 * 60 * 1000; // 5 hours in milliseconds
 
     let s = state.read().await;
     let mut to_delete = Vec::new();
 
     for (access_id, access) in &s.dos_access {
-        let age = now - access.granted_at;
+        let age = now.saturating_sub(access.granted_at as u128);
         let should_delete = age > five_hours_ms &&
             (access.consumed_views >= access.granted_views || access.revoked);
 

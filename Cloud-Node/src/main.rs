@@ -337,7 +337,7 @@ async fn main() -> anyhow::Result<()> {
                         let s = st.read().await;
                         for (username, client) in &s.dos_clients {
                             if client.online {
-                                let elapsed = now_ms.saturating_sub(client.last_seen);
+                    let elapsed = now_ms.saturating_sub(client.last_seen as u128);
                                 if elapsed > offline_threshold_ms {
                                     offline_clients.push(username.clone());
                                 }
@@ -434,5 +434,4 @@ async fn main() -> anyhow::Result<()> {
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
-
 
