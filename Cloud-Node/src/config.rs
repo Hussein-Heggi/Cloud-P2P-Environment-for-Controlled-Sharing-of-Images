@@ -8,9 +8,13 @@ pub struct Config {
     #[arg(long, default_value_t = 1)]
     pub node_id: u32,
 
-    /// Bind for service UDP (client requests)
+    /// Bind for service UDP (client requests) - DEPRECATED: use tcp_bind for clients
     #[arg(long)]
     pub udp_bind: Option<String>,
+
+    /// Bind for TCP client connections (new - replaces UDP for clients)
+    #[arg(long)]
+    pub tcp_bind: Option<String>,
 
     /// Bind for election/heartbeat UDP (cluster-internal)
     #[arg(long)]
@@ -100,6 +104,15 @@ impl Config {
         ]
     }
 
+    /// TCP client connection endpoints (client-facing TCP)
+    pub fn tcp_client_peers() -> &'static [&'static str] {
+        &[
+            "10.40.61.79:9000",  // node 1
+            "10.40.58.169:9000", // node 2
+            "10.40.63.10:9000",  // node 3
+        ]
+    }
+
     pub fn service_bind_addr(&self) -> Option<SocketAddr> {
         if let Some(b) = &self.udp_bind {
             Some(Self::parse_addr(b))
@@ -133,6 +146,15 @@ impl Config {
         } else {
             let idx = (self.node_id - 1) as usize;
             Some(Self::parse_addr(Self::executor_leader_peers()[idx]))
+        }
+    }
+
+    pub fn tcp_client_bind_addr(&self) -> Option<SocketAddr> {
+        if let Some(b) = &self.tcp_bind {
+            Some(Self::parse_addr(b))
+        } else {
+            let idx = (self.node_id - 1) as usize;
+            Some(Self::parse_addr(Self::tcp_client_peers()[idx]))
         }
     }
 

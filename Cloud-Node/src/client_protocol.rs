@@ -132,19 +132,41 @@ pub async fn handle_join(
     client_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
+    println!("[HANDLE_JOIN] Called with {} bytes from {}", data.len(), client_addr);
+
     // Parse: [username_len:u16][username][port:u16][num_images:u32][image_names...]
     let mut offset = 0;
 
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("JOIN message too short: {} bytes", data.len()));
+    }
+
     let username_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
     offset += 2;
+    println!("[HANDLE_JOIN] username_len={}, offset={}", username_len, offset);
+
+    if offset + username_len > data.len() {
+        return Err(anyhow::anyhow!("Invalid username length: {} (data len={})", username_len, data.len()));
+    }
+
     let username = String::from_utf8(data[offset..offset + username_len].to_vec())?;
     offset += username_len;
+    println!("[HANDLE_JOIN] username={}, offset={}, data.len()={}, remaining={}",
+             username, offset, data.len(), data.len() - offset);
 
+    if offset + 2 > data.len() {
+        return Err(anyhow::anyhow!("Not enough data for port: need offset+2={}, have data.len()={}", offset + 2, data.len()));
+    }
     let client_port = u16::from_le_bytes(data[offset..offset + 2].try_into()?);
     offset += 2;
+    println!("[HANDLE_JOIN] client_port={}, offset={}", client_port, offset);
 
+    if offset + 4 > data.len() {
+        return Err(anyhow::anyhow!("Not enough data for num_images: need offset+4={}, have data.len()={}", offset + 4, data.len()));
+    }
     let num_images = u32::from_le_bytes(data[offset..offset + 4].try_into()?) as usize;
     offset += 4;
+    println!("[HANDLE_JOIN] num_images={}, offset={}", num_images, offset);
 
     let mut images = Vec::new();
     for _ in 0..num_images {
@@ -155,17 +177,40 @@ pub async fn handle_join(
         images.push(img_name);
     }
 
+    println!("[HANDLE_JOIN] Parsed: username={}, port={}, {} images", username, client_port, images.len());
     info!("Client {} joining with {} images", username, images.len());
 
     // Check if executor
     let s = state.read().await;
-    let my_ip = client_addr.ip();
-    if !is_executor(&*s, my_ip) {
+    // Use our bound socket IP (not the client's IP) to determine executor role
+    let my_ip = sock.local_addr()?.ip();
+    let exec_ip = s.executor_ip;
+    let lease = s.executor_lease_deadline_ms;
+    let is_exec = is_executor(&*s, my_ip);
+    println!("[HANDLE_JOIN] Executor check: my_ip={}, exec_ip={:?}, lease={:?}, is_exec={}", my_ip, exec_ip, lease, is_exec);
+
+    if !is_exec {
         drop(s);
-        debug!("Not executor, ignoring JOIN");
+        println!(
+            "[HANDLE_JOIN] Not executor, ignoring JOIN from {}:{} (my_ip={:?}, executor_ip={:?}, lease={:?})",
+            client_addr.ip(),
+            client_port,
+            my_ip,
+            exec_ip,
+            lease
+        );
+        debug!(
+            "Not executor, ignoring JOIN from {}:{} (my_ip={:?}, executor_ip={:?}, lease={:?})",
+            client_addr.ip(),
+            client_port,
+            my_ip,
+            exec_ip,
+            lease
+        );
         return Ok(());
     }
     drop(s);
+    println!("[HANDLE_JOIN] I am executor, processing JOIN");
 
     // Send to leader via executor_leader channel
     let mut msg_data = Vec::new();
@@ -184,7 +229,15 @@ pub async fn handle_join(
         msg_data.extend(img.as_bytes());
     }
 
+    println!("[HANDLE_JOIN] Sending EXEC_ADD_CLIENT to leader...");
+    info!(
+        "Forwarding EXEC_ADD_CLIENT to leader for {} (client={}:{})",
+        username,
+        client_addr.ip(),
+        client_port
+    );
     executor_leader::send_to_leader(cfg, executor_leader::EXEC_ADD_CLIENT, &msg_data).await?;
+    println!("[HANDLE_JOIN] Successfully sent to leader");
 
     // Build DOS-C and send JOIN_ACK
     let s = state.read().await;
@@ -206,9 +259,25 @@ pub async fn handle_join(
         }
     }
 
-    sock.send_to(&resp, SocketAddr::new(client_addr.ip(), client_port)).await?;
+    let target_addr = SocketAddr::new(client_addr.ip(), client_port);
+    println!("[HANDLE_JOIN] Sending JOIN_ACK ({} bytes) to {}", resp.len(), target_addr);
+    info!(
+        "Sending JOIN_ACK to {} at {}:{} (clients={}, version={})",
+        username,
+        client_addr.ip(),
+        client_port,
+        dos_clients.len(),
+        dos_c_version
+    );
+    sock.send_to(&resp, target_addr).await?;
 
-    info!("Sent JOIN_ACK to {}", username);
+    println!("[HANDLE_JOIN] Successfully sent JOIN_ACK to {}", target_addr);
+    info!(
+        "Sent JOIN_ACK to {} at {}:{}",
+        username,
+        client_addr.ip(),
+        client_port
+    );
 
     Ok(())
 }
@@ -283,7 +352,8 @@ pub async fn handle_view_request(
 
     // Check if executor
     let s = state.read().await;
-    let my_ip = viewer_addr.ip();
+    // Use our bound socket IP (not the viewer's IP) to determine executor role
+    let my_ip = sock.local_addr()?.ip();
     if !is_executor(&*s, my_ip) {
         drop(s);
         return Ok(());

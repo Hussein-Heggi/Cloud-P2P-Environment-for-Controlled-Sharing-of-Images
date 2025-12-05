@@ -68,7 +68,7 @@ async fn run_join_mode(
     server_addr: SocketAddr,
     images: Vec<String>,
 ) -> Result<()> {
-    println!("=== CLIENT JOIN MODE ===");
+    println!("=== CLIENT JOIN MODE (TCP) ===");
     println!("Username: {}", username);
     println!("Server: {}", server_addr);
     println!("Images: {:?}", images);
@@ -79,25 +79,23 @@ async fn run_join_mode(
     state.images = images;
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
-    // Initialize socket
-    let sock = simple_client::init_socket().await?;
-
-    println!("[CLIENT] Socket bound to {}", sock.local_addr()?);
+    // Connect to server via TCP
+    let stream = simple_client::connect_to_server(server_addr).await?;
     println!();
 
     // Start listener task
     let listener_task = {
         let state_clone = state.clone();
-        let sock_clone = sock.clone();
+        let stream_clone = stream.clone();
         tokio::spawn(async move {
-            if let Err(e) = simple_client::run_listener(state_clone, sock_clone).await {
+            if let Err(e) = simple_client::run_listener(state_clone, stream_clone).await {
                 println!("[CLIENT-LISTENER] Error: {}", e);
             }
         })
     };
 
     // Send JOIN
-    if let Err(e) = simple_client::join_server(state.clone(), sock.clone()).await {
+    if let Err(e) = simple_client::join_server(state.clone(), stream.clone()).await {
         println!("[CLIENT] ⚠️  JOIN failed: {}", e);
         return Ok(());
     }
@@ -109,9 +107,9 @@ async fn run_join_mode(
     // Start ping loop
     let ping_task = {
         let state_clone = state.clone();
-        let sock_clone = sock.clone();
+        let stream_clone = stream.clone();
         tokio::spawn(async move {
-            if let Err(e) = simple_client::ping_loop(state_clone, sock_clone).await {
+            if let Err(e) = simple_client::ping_loop(state_clone, stream_clone).await {
                 println!("[CLIENT-PING] Error: {}", e);
             }
         })
@@ -135,7 +133,7 @@ async fn run_listen_mode(
     username: String,
     server_addr: SocketAddr,
 ) -> Result<()> {
-    println!("=== CLIENT LISTEN MODE ===");
+    println!("=== CLIENT LISTEN MODE (TCP) ===");
     println!("Username: {}", username);
     println!("Server: {}", server_addr);
     println!();
@@ -144,34 +142,33 @@ async fn run_listen_mode(
     let state = ClientState::new(username.clone(), server_addr);
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
-    // Initialize socket
-    let sock = simple_client::init_socket().await?;
+    // Connect to server via TCP
+    let stream = simple_client::connect_to_server(server_addr).await?;
 
-    println!("[CLIENT] Socket bound to {}", sock.local_addr()?);
     println!("[CLIENT] Listening for messages from server...");
     println!();
 
     // Run listener
-    simple_client::run_listener(state, sock).await?;
+    simple_client::run_listener(state, stream).await?;
 
     Ok(())
 }
 
 fn print_usage() {
-    println!("Simple Client - Test the new protocol");
+    println!("Simple Client - Test the new protocol (TCP)");
     println!();
     println!("USAGE:");
     println!("  cargo run -- join <username> <server_ip:port> [image1] [image2] ...");
     println!("  cargo run -- listen <username> <server_ip:port>");
     println!();
     println!("EXAMPLES:");
-    println!("  # Join server with 2 images");
-    println!("  cargo run -- join alice 10.40.61.79:8000 sunset.jpg mountain.png");
+    println!("  # Join server with 2 images (use TCP port 9000)");
+    println!("  cargo run -- join alice 10.40.61.79:9000 sunset.jpg mountain.png");
     println!();
     println!("  # Join server with no images");
-    println!("  cargo run -- join bob 10.40.61.79:8000");
+    println!("  cargo run -- join bob 10.40.61.79:9000");
     println!();
     println!("  # Listen mode (receive messages only)");
-    println!("  cargo run -- listen charlie 10.40.61.79:8000");
+    println!("  cargo run -- listen charlie 10.40.61.79:9000");
     println!();
 }

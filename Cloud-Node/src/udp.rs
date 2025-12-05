@@ -924,6 +924,7 @@ use std::{
             // --------------------- NEW PROTOCOL MESSAGES ---------------------
             // REQ: Initial handshake (type=10)
             x if x == client_protocol::REQ => {
+                info!(%peer, len=n-1, "Received REQ from client");
                 let state_clone = state.clone();
                 let cfg_clone = cfg.clone();
                 let sock_clone = sock.clone();
@@ -944,6 +945,7 @@ use std::{
 
             // JOIN: Client registration (type=27)
             x if x == client_protocol::JOIN => {
+                info!(%peer, len=n-1, "Received JOIN from client");
                 let state_clone = state.clone();
                 let cfg_clone = cfg.clone();
                 let sock_clone = sock.clone();
@@ -964,6 +966,7 @@ use std::{
 
             // CLIENT_PING: Heartbeat (type=50)
             x if x == client_protocol::CLIENT_PING => {
+                info!(%peer, len=n-1, "Received CLIENT_PING from client");
                 let state_clone = state.clone();
                 let sock_clone = sock.clone();
                 let data = buf[1..n].to_vec();
@@ -982,6 +985,7 @@ use std::{
 
             // VIEW_REQUEST: Viewer requests access (type=12)
             x if x == client_protocol::VIEW_REQUEST => {
+                info!(%peer, len=n-1, "Received VIEW_REQUEST from client");
                 let state_clone = state.clone();
                 let cfg_clone = cfg.clone();
                 let sock_clone = sock.clone();
@@ -1002,6 +1006,7 @@ use std::{
 
             // DENY_VIEW: Owner denies view request (type=18)
             x if x == client_protocol::DENY_VIEW => {
+                info!(%peer, len=n-1, "Received DENY_VIEW from client");
                 let state_clone = state.clone();
                 let sock_clone = sock.clone();
                 let data = buf[1..n].to_vec();

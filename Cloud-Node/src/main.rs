@@ -16,6 +16,7 @@ mod firebase;
 mod history;
 mod state;
 mod stego_service;
+mod tcp_client;
 mod udp;
 
 use crate::state::ServerState;
@@ -120,12 +121,27 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Client-facing UDP server
+    // Client-facing UDP server (DEPRECATED - keeping for backward compatibility)
     {
         let st = state.clone();
         let cfg2 = cfg.clone();
         tokio::spawn(async move {
             let _ = udp::run_udp_server(st, cfg2).await;
+        });
+    }
+
+    // Client-facing TCP server (NEW - primary client interface)
+    {
+        let st = state.clone();
+        let cfg2 = cfg.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(e) = tcp_client::run_tcp_client_server(st.clone(), cfg2.clone()).await {
+                    println!("[TCP-CLIENT] ⚠️  Server error: {} - restarting in 5s", e);
+                    info!(error=%e, "TCP client server error - will restart");
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
         });
     }
 

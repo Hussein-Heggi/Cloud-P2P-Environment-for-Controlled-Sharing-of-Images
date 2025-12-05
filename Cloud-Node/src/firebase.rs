@@ -2,8 +2,7 @@ use anyhow::{Context, Result};
 use firestore::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::path::PathBuf;
 use tracing::{debug, info, warn, error};
 
 use crate::state::SharedState;
@@ -36,10 +35,57 @@ pub struct DosAccess {
 pub async fn init_firestore() -> Result<FirestoreDb> {
     info!("Initializing Firestore connection...");
 
-    // Use default initialization (looks for GOOGLE_APPLICATION_CREDENTIALS env var)
-    let db = FirestoreDb::new("dist-proj-25")
+    // Prefer explicit service account credentials if available
+    // 1) GOOGLE_APPLICATION_CREDENTIALS env var
+    // 2) firebase-admin.json in CWD
+    // 3) ../firebase-admin.json (when running from Cloud-Node dir)
+    let mut key_path: Option<PathBuf> = None;
+
+    if let Ok(env_path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+        let candidate = PathBuf::from(env_path);
+        if candidate.exists() {
+            key_path = Some(candidate);
+        } else {
+            warn!(
+                "GOOGLE_APPLICATION_CREDENTIALS is set but file not found at {:?}, falling back",
+                candidate
+            );
+        }
+    }
+
+    if key_path.is_none() {
+        let local = PathBuf::from("firebase-admin.json");
+        if local.exists() {
+            key_path = Some(local);
+        } else {
+            let parent = PathBuf::from("../firebase-admin.json");
+            if parent.exists() {
+                key_path = Some(parent);
+            }
+        }
+    }
+
+    let project_id = "dist-proj-25";
+
+    let db = if let Some(service_account) = key_path {
+        info!(?service_account, "Using Firebase service account key file");
+        FirestoreDb::with_options_service_account_key_file(
+            FirestoreDbOptions::new(project_id.to_string()),
+            service_account.clone(),
+        )
         .await
-        .context("Failed to initialize Firestore")?;
+        .with_context(|| {
+            format!(
+                "Failed to initialize Firestore with credentials at {:?}",
+                service_account
+            )
+        })?
+    } else {
+        info!("No service account file found; falling back to default Google auth chain");
+        FirestoreDb::new(project_id)
+            .await
+            .context("Failed to initialize Firestore")?
+    };
 
     info!("Firestore connection established");
     Ok(db)
