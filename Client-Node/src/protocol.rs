@@ -31,6 +31,7 @@ pub const DELETE_IMAGE: u8 = 26;
 pub const JOIN: u8 = 27;
 pub const JOIN_ACK: u8 = 28;
 pub const DOS_UPDATE: u8 = 29;
+pub const DOS_QUERY: u8 = 52;
 pub const CLIENT_PING: u8 = 50;
 pub const SERVER_PONG: u8 = 51;
 

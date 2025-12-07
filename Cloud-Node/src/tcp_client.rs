@@ -190,6 +190,11 @@ async fn route_client_message(
             handle_sync_usage_tcp(state, &cfg, stream, peer_addr, payload).await
         }
 
+        x if x == client_protocol::DOS_QUERY => {
+            info!(%peer_addr, len=payload.len(), "Received DOS_QUERY from client");
+            handle_dos_query_tcp(state, stream, peer_addr, payload).await
+        }
+
         _ => {
             warn!(%peer_addr, msg_type, "Unknown message type from client");
             Ok(())
@@ -451,6 +456,82 @@ async fn handle_client_ping_tcp(
     send_tcp_response(stream, client_protocol::SERVER_PONG, &pong_data).await?;
 
     println!("[PING] {} (DOS version={})", username, dos_version);
+    Ok(())
+}
+
+/// Handle DOS_QUERY: Client requests updated DOS-C
+async fn handle_dos_query_tcp(
+    state: SharedState,
+    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    data: &[u8],
+) -> Result<()> {
+    // Parse: [username_len:u16][username]
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("DOS_QUERY too short: {} bytes", data.len()));
+    }
+
+    let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
+    if data.len() < 2 + username_len {
+        return Err(anyhow::anyhow!("DOS_QUERY invalid username length"));
+    }
+
+    let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
+
+    println!("[DOS_QUERY] Request from {} ({})", username, peer_addr);
+
+    // Build MINIMAL DOS-C v2.0 payload (same format as JOIN_ACK)
+    // Excludes: requesting client (self-exclusion), IP, port, last_seen, online
+    // Includes: dos_version, name, actual_images only
+    let dos_payload = {
+        let s = state.read().await;
+        let mut payload = Vec::new();
+
+        // DOS version (u64) - Cast u32 to u64 for wire format!
+        let dos_version_u64 = s.dos_c_version as u64;
+        payload.extend(dos_version_u64.to_le_bytes());
+
+        // Self-exclusion: filter out requesting client
+        let clients_to_send: Vec<_> = s.dos_clients
+            .iter()
+            .filter(|(name, _)| *name != &username)  // EXCLUDE SELF
+            .collect();
+
+        // Number of clients (u32) - excludes requesting client
+        let num_clients = clients_to_send.len() as u32;
+        payload.extend(num_clients.to_le_bytes());
+
+        println!("[DOS_QUERY] Building MINIMAL DOS-C v2.0: version={}, num_clients={} (excluded: {})",
+                 dos_version_u64, num_clients, username);
+
+        // For each client (MINIMAL FORMAT: name + actual_images only)
+        for (client_name, client) in clients_to_send {
+            // Username
+            let name_bytes = client_name.as_bytes();
+            payload.extend((name_bytes.len() as u16).to_le_bytes());
+            payload.extend_from_slice(name_bytes);
+
+            // Number of images (u32) - ONLY actual images (no cover)
+            payload.extend((client.actual_images.len() as u32).to_le_bytes());
+
+            // Image names (actual images only, cover not included in DOS-C)
+            for img in &client.actual_images {
+                let img_bytes = img.as_bytes();
+                payload.extend((img_bytes.len() as u16).to_le_bytes());
+                payload.extend_from_slice(img_bytes);
+            }
+
+            println!("[DOS_QUERY]   ✅ {} -> actual_images={:?}",
+                client_name, client.actual_images);
+        }
+
+        payload
+    };
+
+    // Send DOS_UPDATE with DOS-C payload
+    println!("[DOS_QUERY] Sending DOS_UPDATE with DOS-C ({} bytes) to {}", dos_payload.len(), peer_addr);
+    send_tcp_response(stream.clone(), client_protocol::DOS_UPDATE, &dos_payload).await?;
+
     Ok(())
 }
 

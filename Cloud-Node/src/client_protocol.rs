@@ -46,6 +46,7 @@ pub const DOS_UPDATE: u8 = 29;             // Executor → All clients: DOS-C ch
 // Client heartbeat
 pub const CLIENT_PING: u8 = 50;            // Client → All servers: Heartbeat
 pub const SERVER_PONG: u8 = 51;            // Server → Client: Pong + DOS version
+pub const DOS_QUERY: u8 = 52;              // Client → Server: Request updated DOS-C
 
 // Sync messages
 pub const SYNC_USAGE: u8 = 30;             // Client → Executor: Report offline usage

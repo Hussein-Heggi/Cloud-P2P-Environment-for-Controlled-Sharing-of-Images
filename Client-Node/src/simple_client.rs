@@ -325,16 +325,58 @@ pub async fn run_listener(
             SERVER_PONG => {
                 if data.len() >= 4 {
                     let dos_version = u32::from_le_bytes(data[0..4].try_into().unwrap());
-                    let mut s = state.write().await;
-                    let old_version = s.dos_version;
-                    s.dos_version = dos_version;
-                    if dos_version != old_version {
+                    let (old_version, username, version_changed) = {
+                        let mut s = state.write().await;
+                        let old_version = s.dos_version;
+                        s.dos_version = dos_version;
+                        let version_changed = dos_version != old_version;
+                        (old_version, s.username.clone(), version_changed)
+                    };
+
+                    if version_changed {
                         println!("[CLIENT] ✅ PONG received - DOS version updated: {} -> {}", old_version, dos_version);
+                        println!("[CLIENT] 🔄 Requesting updated DOS-C from server...");
+
+                        // Send DOS_QUERY to get updated DOS-C
+                        let mut payload = Vec::new();
+                        let username_bytes = username.as_bytes();
+                        payload.extend((username_bytes.len() as u16).to_le_bytes());
+                        payload.extend_from_slice(username_bytes);
+
+                        let mut w = writer.lock().await;
+                        if let Err(e) = send_tcp_message_generic(&mut *w, DOS_QUERY, &payload).await {
+                            println!("[CLIENT] ⚠️  Failed to send DOS_QUERY: {}", e);
+                        } else {
+                            println!("[CLIENT] ✅ DOS_QUERY sent");
+                        }
                     } else {
                         println!("[CLIENT] ✅ PONG received - DOS version: {}", dos_version);
                     }
                 } else {
                     println!("[CLIENT-LISTENER] SERVER_PONG too short ({} bytes)", data.len());
+                }
+            }
+
+            DOS_UPDATE => {
+                println!("[CLIENT] 📥 DOS_UPDATE received from server ({} bytes)", data.len());
+
+                // Parse MINIMAL DOS-C v2.0 (same format as JOIN_ACK)
+                // Format: [dos_c_version:u64][num_clients:u32][client_entries...]
+                match crate::dos::parse_dos_c_from_join_ack(&data) {
+                    Ok((clients, dos_c_version)) => {
+                        let mut s = state.write().await;
+                        s.dos.update(clients, dos_c_version);
+                        println!("[CLIENT] ✅ DOS-C updated to version {} with {} clients",
+                                 dos_c_version, s.dos.get_all_clients().len());
+
+                        // Log all clients for debugging
+                        for (name, client) in s.dos.get_all_clients() {
+                            println!("[CLIENT]   - {} ({} images)", name, client.images.len());
+                        }
+                    }
+                    Err(e) => {
+                        println!("[CLIENT] ⚠️  Failed to parse DOS_UPDATE: {}", e);
+                    }
                 }
             }
 
