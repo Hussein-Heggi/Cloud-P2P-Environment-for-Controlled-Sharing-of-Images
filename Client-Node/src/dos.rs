@@ -4,15 +4,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// DOS Client entry - matches server's DosClient structure
+/// DOS Client entry - MINIMAL v2.0 format (name + actual_images only)
+/// Excludes: IP, port, last_seen, online (kept server-side only in DOS-S)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DosClient {
     pub client_name: String,
-    pub client_ip: String,
-    pub client_port: u16,
+    /// Actual images only (no cover image)
     pub images: Vec<String>,
-    pub last_seen: u64,
-    pub online: bool,
 }
 
 /// Local DOS state management
@@ -34,17 +32,32 @@ impl DosState {
 
     /// Update DOS from server data
     pub fn update(&mut self, clients: HashMap<String, DosClient>, version: u64) {
+        println!("[DOS DEBUG] Updating DOS state...");
+        println!("[DOS DEBUG] Previous version: {}, new version: {}", self.version, version);
+        println!("[DOS DEBUG] Previous client count: {}, new client count: {}", self.clients.len(), clients.len());
+
+        for (name, client) in &clients {
+            println!("[DOS DEBUG] New client in update: {} ({} images)",
+                     name, client.images.len());
+        }
+
         self.clients = clients;
         self.version = version;
         println!("[DOS] Updated to version {} with {} clients", version, self.clients.len());
+
+        println!("[DOS DEBUG] After update, clients in state:");
+        for (name, client) in &self.clients {
+            println!("[DOS DEBUG]   - {} ({} images)",
+                     name, client.images.len());
+        }
     }
 
-    /// Get all online users
-    pub fn list_online_users(&self) -> Vec<String> {
+    /// Get all users (online status not tracked in minimal DOS-C v2.0)
+    #[allow(dead_code)]
+    pub fn list_all_users(&self) -> Vec<String> {
         self.clients
-            .iter()
-            .filter(|(_, client)| client.online)
-            .map(|(name, _)| name.clone())
+            .keys()
+            .cloned()
             .collect()
     }
 
@@ -53,12 +66,10 @@ impl DosState {
         self.clients.get(username).map(|client| client.images.clone())
     }
 
-    /// Check if a user is online
-    pub fn is_online(&self, username: &str) -> bool {
-        self.clients
-            .get(username)
-            .map(|client| client.online)
-            .unwrap_or(false)
+    /// Check if a user exists (online status not tracked in minimal DOS-C v2.0)
+    #[allow(dead_code)]
+    pub fn user_exists(&self, username: &str) -> bool {
+        self.clients.contains_key(username)
     }
 
     /// Get client info
@@ -77,9 +88,10 @@ impl DosState {
     }
 }
 
-/// Parse DOS-C from JOIN_ACK payload
+/// Parse MINIMAL DOS-C v2.0 from JOIN_ACK payload
 /// Format: [dos_c_version:u64][num_clients:u32][client_entries...]
-/// Each client entry: [name_len:u16][name][ip_len:u16][ip][port:u16][num_images:u32][image_list][last_seen:u64][online:u8]
+/// Each client entry (MINIMAL): [name_len:u16][name][num_images:u32][image_entries...]
+/// Excluded: IP, port, last_seen, online, cover_image (kept server-side)
 pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<String, DosClient>, u64)> {
     if payload.len() < 12 {
         return Err(anyhow::anyhow!("JOIN_ACK payload too small: {} bytes", payload.len()));
@@ -95,7 +107,7 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
     let num_clients = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
     offset += 4;
 
-    println!("[DOS] Parsing JOIN_ACK: version={} num_clients={}", dos_c_version, num_clients);
+    println!("[DOS] Parsing MINIMAL DOS-C v2.0: version={} num_clients={}", dos_c_version, num_clients);
 
     let mut clients = HashMap::new();
 
@@ -115,30 +127,7 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
         let client_name = String::from_utf8(payload[offset..offset + name_len].to_vec())?;
         offset += name_len;
 
-        // Parse client IP
-        if offset + 2 > payload.len() {
-            return Err(anyhow::anyhow!("Unexpected end at IP length for client {}", i));
-        }
-
-        let ip_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
-        offset += 2;
-
-        if offset + ip_len > payload.len() {
-            return Err(anyhow::anyhow!("Invalid IP length at client {}", i));
-        }
-
-        let client_ip = String::from_utf8(payload[offset..offset + ip_len].to_vec())?;
-        offset += ip_len;
-
-        // Parse client port
-        if offset + 2 > payload.len() {
-            return Err(anyhow::anyhow!("Unexpected end at port for client {}", i));
-        }
-
-        let client_port = u16::from_le_bytes(payload[offset..offset + 2].try_into()?);
-        offset += 2;
-
-        // Parse number of images
+        // Parse number of images (actual images only, no cover)
         if offset + 4 > payload.len() {
             return Err(anyhow::anyhow!("Unexpected end at num_images for client {}", i));
         }
@@ -146,7 +135,7 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
         let num_images = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
         offset += 4;
 
-        // Parse image list
+        // Parse image list (actual images only)
         let mut images = Vec::new();
         for j in 0..num_images {
             if offset + 2 > payload.len() {
@@ -165,37 +154,20 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
             images.push(image_name);
         }
 
-        // Parse last_seen
-        if offset + 8 > payload.len() {
-            return Err(anyhow::anyhow!("Unexpected end at last_seen for client {}", i));
-        }
-
-        let last_seen = u64::from_le_bytes(payload[offset..offset + 8].try_into()?);
-        offset += 8;
-
-        // Parse online status
-        if offset >= payload.len() {
-            return Err(anyhow::anyhow!("Unexpected end at online status for client {}", i));
-        }
-
-        let online = payload[offset] != 0;
-        offset += 1;
+        // NO MORE FIELDS - minimal format ends here!
+        // (no IP, port, last_seen, online)
 
         let dos_client = DosClient {
             client_name: client_name.clone(),
-            client_ip,
-            client_port,
             images,
-            last_seen,
-            online,
         };
 
-        println!("[DOS] Parsed client: {} (online={}, {} images)", client_name, online, dos_client.images.len());
+        println!("[DOS] Parsed client: {} ({} actual images)", client_name, dos_client.images.len());
 
         clients.insert(client_name, dos_client);
     }
 
-    println!("[DOS] Successfully parsed {} clients from JOIN_ACK", clients.len());
+    println!("[DOS] Successfully parsed {} clients from MINIMAL DOS-C v2.0", clients.len());
 
     Ok((clients, dos_c_version))
 }
@@ -213,19 +185,13 @@ mod tests {
             "alice".to_string(),
             DosClient {
                 client_name: "alice".to_string(),
-                client_ip: "10.0.0.1".to_string(),
-                client_port: 9080,
                 images: vec!["secret.png".to_string(), "photo.jpg".to_string()],
-                last_seen: 12345,
-                online: true,
             },
         );
 
         dos.update(clients, 1);
 
         assert_eq!(dos.get_version(), 1);
-        assert!(dos.is_online("alice"));
         assert_eq!(dos.list_images("alice").unwrap().len(), 2);
-        assert_eq!(dos.list_online_users().len(), 1);
     }
 }

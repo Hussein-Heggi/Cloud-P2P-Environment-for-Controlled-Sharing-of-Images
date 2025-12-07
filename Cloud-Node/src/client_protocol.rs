@@ -239,34 +239,48 @@ pub async fn handle_join(
     executor_leader::send_to_leader(cfg, executor_leader::EXEC_ADD_CLIENT, &msg_data).await?;
     println!("[HANDLE_JOIN] Successfully sent to leader");
 
-    // Build DOS-C and send JOIN_ACK
-    let s = state.read().await;
-    let dos_c_version = s.dos_c_version;
-    let dos_clients = s.dos_clients.clone();
-    drop(s);
+    // Build MINIMAL DOS-C v2.0 and send JOIN_ACK
+    // Excludes: requesting client (self-exclusion), IP, port, last_seen, online
+    // Includes: dos_version, name, actual_images only
+    let (dos_c_version, clients_to_send_count, mut resp) = {
+        let s = state.read().await;
+        let dos_c_version = s.dos_c_version;
 
-    let mut resp = vec![JOIN_ACK];
-    resp.extend(dos_c_version.to_le_bytes());
-    resp.extend((dos_clients.len() as u32).to_le_bytes());
+        // Self-exclusion: filter out requesting client
+        let clients_to_send: Vec<_> = s.dos_clients
+            .iter()
+            .filter(|(name, _)| *name != &username)  // EXCLUDE SELF
+            .collect();
 
-    for (name, client) in &dos_clients {
-        resp.extend((name.len() as u16).to_le_bytes());
-        resp.extend(name.as_bytes());
-        resp.extend((client.images.len() as u32).to_le_bytes());
-        for img in &client.images {
-            resp.extend((img.len() as u16).to_le_bytes());
-            resp.extend(img.as_bytes());
+        let clients_count = clients_to_send.len();
+
+        let mut resp = vec![JOIN_ACK];
+        resp.extend(dos_c_version.to_le_bytes());
+        resp.extend((clients_count as u32).to_le_bytes());
+
+        for (name, client) in clients_to_send {
+            resp.extend((name.len() as u16).to_le_bytes());
+            resp.extend(name.as_bytes());
+            // Send only actual images in DOS-C (not cover)
+            resp.extend((client.actual_images.len() as u32).to_le_bytes());
+            for img in &client.actual_images {
+                resp.extend((img.len() as u16).to_le_bytes());
+                resp.extend(img.as_bytes());
+            }
+            // NO IP, NO PORT, NO LAST_SEEN, NO ONLINE - minimal format!
         }
-    }
+
+        (dos_c_version, clients_count, resp)
+    };
 
     let target_addr = SocketAddr::new(client_addr.ip(), client_port);
-    println!("[HANDLE_JOIN] Sending JOIN_ACK ({} bytes) to {}", resp.len(), target_addr);
+    println!("[HANDLE_JOIN] Sending JOIN_ACK ({} bytes) to {} (MINIMAL DOS-C v2.0, excluded: {})", resp.len(), target_addr, username);
     info!(
-        "Sending JOIN_ACK to {} at {}:{} (clients={}, version={})",
+        "Sending JOIN_ACK to {} at {}:{} (clients={}, version={}, self-excluded)",
         username,
         client_addr.ip(),
         client_port,
-        dos_clients.len(),
+        clients_to_send_count,
         dos_c_version
     );
     sock.send_to(&resp, target_addr).await?;

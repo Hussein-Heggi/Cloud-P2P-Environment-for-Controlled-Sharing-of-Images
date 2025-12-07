@@ -13,7 +13,10 @@ pub struct DosClient {
     pub client_name: String,
     pub client_ip: String,
     pub client_port: u16,
-    pub images: Vec<String>,
+    /// Cover image (first image from JOIN) - used for steganography, NOT sent in DOS-C
+    pub cover_image: Option<String>,
+    /// Actual images (remaining images from JOIN) - shareable, sent in DOS-C
+    pub actual_images: Vec<String>,
     pub last_seen: u64, // use u64 for Firestore compatibility
     pub online: bool,
 }

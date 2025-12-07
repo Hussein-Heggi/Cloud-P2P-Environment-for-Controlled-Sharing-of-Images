@@ -317,6 +317,17 @@ async fn handle_join_tcp(
 
     println!("[HANDLE_JOIN_TCP] ✅ Parsed: username={} port={} images={:?}", username, client_port, images);
 
+    // Split images into cover and actual
+    // If num_images > 1: first = cover, rest = actual
+    // If num_images == 1: single image = actual, no cover
+    let (cover_image, actual_images) = if images.len() > 1 {
+        (Some(images[0].clone()), images[1..].to_vec())
+    } else {
+        (None, images)
+    };
+
+    println!("[HANDLE_JOIN_TCP] Split images: cover={:?}, actual={:?}", cover_image, actual_images);
+
     // Register client in state
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -330,7 +341,8 @@ async fn handle_join_tcp(
                 client_name: username.clone(),
                 client_ip: peer_addr.ip().to_string(),
                 client_port: client_port,
-                images: images.clone(),
+                cover_image: cover_image.clone(),
+                actual_images: actual_images.clone(),
                 online: true,
                 last_seen: now_ms,
             },
@@ -338,53 +350,51 @@ async fn handle_join_tcp(
         s.dos_c_version += 1;
     }
 
-    // Build DOS-C payload for JOIN_ACK
+    // Build MINIMAL DOS-C payload for JOIN_ACK (v2.0)
+    // Excludes: requesting client (self-exclusion), IP, port, last_seen, online
+    // Includes: dos_version, name, actual_images only
     let dos_payload = {
         let s = state.read().await;
         let mut payload = Vec::new();
 
-        // DOS version (u64)
-        payload.extend(s.dos_c_version.to_le_bytes());
+        // DOS version (u64) - Cast u32 to u64 for wire format!
+        let dos_version_u64 = s.dos_c_version as u64;
+        payload.extend(dos_version_u64.to_le_bytes());
 
-        // Number of clients (u32)
-        let num_clients = s.dos_clients.len() as u32;
+        // Self-exclusion: filter out requesting client
+        let clients_to_send: Vec<_> = s.dos_clients
+            .iter()
+            .filter(|(name, _)| *name != &username)  // EXCLUDE SELF
+            .collect();
+
+        // Number of clients (u32) - excludes requesting client
+        let num_clients = clients_to_send.len() as u32;
         payload.extend(num_clients.to_le_bytes());
 
-        println!("[HANDLE_JOIN_TCP] Building DOS-C: version={}, num_clients={}", s.dos_c_version, num_clients);
+        println!("[HANDLE_JOIN_TCP] Building MINIMAL DOS-C v2.0: version={}, num_clients={} (excluded: {})",
+                 dos_version_u64, num_clients, username);
 
-        // For each client
-        for (client_name, client) in &s.dos_clients {
+        // For each client (MINIMAL FORMAT: name + actual_images only)
+        for (client_name, client) in clients_to_send {
             // Username
             let name_bytes = client_name.as_bytes();
             payload.extend((name_bytes.len() as u16).to_le_bytes());
             payload.extend_from_slice(name_bytes);
 
-            // IP address
-            let ip_bytes = client.client_ip.as_bytes();
-            payload.extend((ip_bytes.len() as u16).to_le_bytes());
-            payload.extend_from_slice(ip_bytes);
+            // Number of images (u32) - ONLY actual images (no cover)
+            payload.extend((client.actual_images.len() as u32).to_le_bytes());
 
-            // Port (u16)
-            payload.extend(client.client_port.to_le_bytes());
-
-            // Number of images (u32)
-            payload.extend((client.images.len() as u32).to_le_bytes());
-
-            // Image names
-            for img in &client.images {
+            // Image names (actual images only, cover not included in DOS-C)
+            for img in &client.actual_images {
                 let img_bytes = img.as_bytes();
                 payload.extend((img_bytes.len() as u16).to_le_bytes());
                 payload.extend_from_slice(img_bytes);
             }
 
-            // Online status (u8: 1 = online, 0 = offline)
-            payload.push(if client.online { 1 } else { 0 });
+            // NO IP, NO PORT, NO LAST_SEEN, NO ONLINE - minimal format!
 
-            // Last seen timestamp (u64)
-            payload.extend(client.last_seen.to_le_bytes());
-
-            println!("[HANDLE_JOIN_TCP]   - {} ({}:{}) images={:?} online={}",
-                client_name, client.client_ip, client.client_port, client.images, client.online);
+            println!("[HANDLE_JOIN_TCP]   ✅ {} -> actual_images={:?} (cover={:?} kept server-side)",
+                client_name, client.actual_images, client.cover_image);
         }
 
         payload
@@ -394,8 +404,8 @@ async fn handle_join_tcp(
     println!("[HANDLE_JOIN_TCP] Sending JOIN_ACK with DOS-C ({} bytes) to {}", dos_payload.len(), peer_addr);
     send_tcp_response(stream.clone(), client_protocol::JOIN_ACK, &dos_payload).await?;
 
-    // Notify leader to write to Firebase
-    if let Err(e) = notify_leader_add_client(cfg, &username, peer_addr.ip().to_string(), client_port, images).await {
+    // Notify leader to write to Firebase (send cover + actual images)
+    if let Err(e) = notify_leader_add_client(cfg, &username, peer_addr.ip().to_string(), client_port, cover_image.clone(), actual_images.clone()).await {
         warn!("Failed to notify leader about new client: {}", e);
     }
 
@@ -689,7 +699,8 @@ async fn notify_leader_add_client(
     username: &str,
     ip: String,
     port: u16,
-    images: Vec<String>,
+    cover_image: Option<String>,
+    actual_images: Vec<String>,
 ) -> Result<()> {
     // Build EXEC_ADD_CLIENT message
     let mut data = Vec::new();
@@ -704,8 +715,15 @@ async fn notify_leader_add_client(
 
     data.extend(port.to_le_bytes());
 
-    data.extend((images.len() as u32).to_le_bytes());
-    for img in images {
+    // Combine cover + actual images for wire format (cover first if exists)
+    let mut all_images = Vec::new();
+    if let Some(cover) = cover_image {
+        all_images.push(cover);
+    }
+    all_images.extend(actual_images);
+
+    data.extend((all_images.len() as u32).to_le_bytes());
+    for img in all_images {
         let img_bytes = img.as_bytes();
         data.extend((img_bytes.len() as u16).to_le_bytes());
         data.extend_from_slice(img_bytes);

@@ -124,6 +124,14 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
         images.push(img_name);
     }
 
+    // Split images into cover and actual
+    // Wire format: cover first (if multiple), then actual images
+    let (cover_image, actual_images) = if images.len() > 1 {
+        (Some(images[0].clone()), images[1..].to_vec())
+    } else {
+        (None, images)
+    };
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
@@ -132,7 +140,8 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
         client_name: username.clone(),
         client_ip,
         client_port,
-        images,
+        cover_image,
+        actual_images,
         last_seen: now,
         online: true,
     };

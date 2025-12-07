@@ -27,7 +27,10 @@ pub struct ClientState {
     pub username: String,
     pub server_addr: SocketAddr,
     pub client_port: u16,
-    pub images: Vec<String>,
+    /// Cover image (first image in CLI args) - used for steganography, NOT shared in DOS-C
+    pub cover_image: Option<String>,
+    /// Actual images (remaining CLI args) - shareable images shown in DOS-C
+    pub actual_images: Vec<String>,
     pub joined: bool,
     pub dos_version: u32,
     pub dos: DosState,
@@ -45,7 +48,8 @@ impl ClientState {
             username,
             server_addr,
             client_port: 0,
-            images: Vec::new(),
+            cover_image: None,
+            actual_images: Vec::new(),
             joined: false,
             dos_version: 0,
             dos: DosState::new(),
@@ -53,6 +57,38 @@ impl ClientState {
             pending_view_requests: HashMap::new(),
             downloads: Vec::new(),
         }
+    }
+
+    /// Set images from command line (first = cover if multiple, rest = actual)
+    pub fn set_images(&mut self, images: Vec<String>) {
+        if images.len() > 1 {
+            // Multiple images: first = cover, rest = actual
+            self.cover_image = Some(images[0].clone());
+            self.actual_images = images[1..].to_vec();
+            println!("[CLIENT] Cover image: {}", images[0]);
+            println!("[CLIENT] Actual images: {:?}", self.actual_images);
+        } else if images.len() == 1 {
+            // Single image: actual only, no cover
+            self.cover_image = None;
+            self.actual_images = images;
+            println!("[CLIENT] Actual images: {:?}", self.actual_images);
+            println!("[CLIENT] No cover image (single image provided)");
+        } else {
+            // No images
+            self.cover_image = None;
+            self.actual_images = Vec::new();
+            println!("[CLIENT] No images");
+        }
+    }
+
+    /// Get all images (cover + actual) for JOIN message
+    pub fn get_all_images_for_join(&self) -> Vec<String> {
+        let mut all_images = Vec::new();
+        if let Some(ref cover) = self.cover_image {
+            all_images.push(cover.clone());
+        }
+        all_images.extend(self.actual_images.clone());
+        all_images
     }
 }
 
@@ -123,7 +159,7 @@ pub async fn join_server(
 ) -> Result<()> {
     let (username, server_addr, images) = {
         let s = state.read().await;
-        (s.username.clone(), s.server_addr, s.images.clone())
+        (s.username.clone(), s.server_addr, s.get_all_images_for_join())
     };
 
     println!("[CLIENT] Sending JOIN to server {}...", server_addr);

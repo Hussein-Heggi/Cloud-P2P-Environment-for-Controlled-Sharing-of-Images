@@ -56,11 +56,8 @@ pub struct DosResponse {
 #[derive(Debug, Serialize)]
 pub struct DosClientInfo {
     pub name: String,
-    pub ip: String,
-    pub port: u16,
     pub images: Vec<String>,
-    pub online: bool,
-    pub last_seen: u64,
+    // Removed: ip, port, online, last_seen (not in minimal DOS-C v2.0)
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,17 +140,28 @@ async fn get_status(State(api_state): State<ApiState>) -> Json<StatusResponse> {
 async fn get_dos(State(api_state): State<ApiState>) -> Json<DosResponse> {
     let s = api_state.client_state.read().await;
 
-    let users: Vec<DosClientInfo> = s.dos.get_all_clients()
+    println!("[API DEBUG] /api/dos called");
+    println!("[API DEBUG] DOS state has {} clients", s.dos.get_all_clients().len());
+
+    let all_clients = s.dos.get_all_clients();
+    for (name, client) in all_clients.iter() {
+        println!("[API DEBUG] Client in DOS: {} ({} images)",
+                 name, client.images.len());
+    }
+
+    let users: Vec<DosClientInfo> = all_clients
         .iter()
         .map(|(_, client)| DosClientInfo {
             name: client.client_name.clone(),
-            ip: client.client_ip.clone(),
-            port: client.client_port,
             images: client.images.clone(),
-            online: client.online,
-            last_seen: client.last_seen,
         })
         .collect();
+
+    println!("[API DEBUG] Returning {} users in response (MINIMAL DOS-C v2.0)", users.len());
+    for user in &users {
+        println!("[API DEBUG] Response user: {} ({} images)",
+                 user.name, user.images.len());
+    }
 
     Json(DosResponse {
         users,

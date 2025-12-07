@@ -9,14 +9,11 @@ const api = axios.create({
   },
 });
 
-// Types matching the Rust backend
+// Types matching the Rust backend (MINIMAL DOS-C v2.0)
 export interface DosClient {
   name: string;
-  ip: string;
-  port: number;
   images: string[];
-  online: boolean;
-  last_seen: number;
+  // Removed: ip, port, online, last_seen (not in minimal DOS-C)
 }
 
 export interface DosResponse {

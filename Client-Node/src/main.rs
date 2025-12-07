@@ -31,7 +31,8 @@ async fn main() -> Result<()> {
     match args[1].as_str() {
         "join" => {
             if args.len() < 4 {
-                println!("Usage: {} join <username> <server_ip:port> [image1] [image2] ...", args[0]);
+                println!("Usage: {} join <username> <server_ip:port> [COVER_IMAGE] [actual_image1] [actual_image2] ...", args[0]);
+                println!("  First image = cover (optional), remaining = actual images");
                 return Ok(());
             }
 
@@ -56,7 +57,8 @@ async fn main() -> Result<()> {
 
         "interactive" => {
             if args.len() < 4 {
-                println!("Usage: {} interactive <username> <server_ip:port> [image1] [image2] ...", args[0]);
+                println!("Usage: {} interactive <username> <server_ip:port> [COVER_IMAGE] [actual_image1] [actual_image2] ...", args[0]);
+                println!("  First image = cover (optional), remaining = actual images");
                 return Ok(());
             }
 
@@ -135,12 +137,12 @@ async fn run_join_mode(
     println!("Username: {}", username);
     println!("Server: {}", server_addr);
     println!("Client port: {}", CLIENT_PORT);
-    println!("Images: {:?}", images);
+    println!("Images (raw): {:?}", images);
     println!();
 
     // Initialize state
     let mut state = ClientState::new(username.clone(), server_addr);
-    state.images = images;
+    state.set_images(images);
     state.client_port = CLIENT_PORT;
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
@@ -230,12 +232,12 @@ async fn run_interactive_mode(
     println!("Username: {}", username);
     println!("Server: {}", server_addr);
     println!("Client port: {}", CLIENT_PORT);
-    println!("Images: {:?}", images);
+    println!("Images (raw): {:?}", images);
     println!();
 
     // Initialize state
     let mut state = ClientState::new(username.clone(), server_addr);
-    state.images = images;
+    state.set_images(images);
     state.client_port = CLIENT_PORT;
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
@@ -309,16 +311,22 @@ fn print_usage() {
     println!("Simple Client - Test the new protocol (TCP)");
     println!();
     println!("USAGE:");
-    println!("  cargo run -- join <username> <server_ip:port> [image1] [image2] ...");
+    println!("  cargo run -- join <username> <server_ip:port> [COVER] [actual1] [actual2] ...");
     println!("  cargo run -- listen <username> <server_ip:port>");
-    println!("  cargo run -- interactive <username> <server_ip:port> [image1] [image2] ...");
+    println!("  cargo run -- interactive <username> <server_ip:port> [COVER] [actual1] [actual2] ...");
     println!("  cargo run -- upload <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path>");
     println!("  cargo run -- approve <username> <server_ip:port> <image_name> <req_id>");
     println!("  cargo run -- upload-and-fetch <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path> [req_id]");
     println!();
+    println!("IMAGE ARGUMENT FORMAT:");
+    println!("  First image = COVER image (used for steganography, not shareable)");
+    println!("  Remaining images = ACTUAL images (shareable, shown in DOS-C)");
+    println!("  If only 1 image provided: treated as actual image (no cover)");
+    println!();
     println!("EXAMPLES:");
     println!("  # Interactive mode with Web UI (RECOMMENDED)");
-    println!("  cargo run -- interactive alice 10.40.61.79:9080 sunset.jpg mountain.png");
+    println!("  cargo run -- interactive alice 10.40.61.79:9080 cover.png sunset.jpg mountain.png");
+    println!("  # → cover: cover.png, actual: [sunset.jpg, mountain.png]");
     println!("  # Then open http://localhost:3000 in browser (requires 'npm run dev' in web-ui/)");
     println!();
     println!("  # Join server with 2 images (use TCP port 9000)");

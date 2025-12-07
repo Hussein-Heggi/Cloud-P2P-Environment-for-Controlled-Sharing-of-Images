@@ -31,7 +31,11 @@ export default function Dashboard() {
       const fetchDos = async () => {
         try {
           const data = await getDos();
+          console.log('[UI DEBUG] Fetched DOS data:', data);
+          console.log('[UI DEBUG] Number of users in response:', data.users.length);
+          console.log('[UI DEBUG] User names:', data.users.map(u => u.name));
           setDosClients(data.users);
+          console.log('[UI DEBUG] State updated with', data.users.length, 'clients');
         } catch (error) {
           console.error('Failed to fetch DOS:', error);
         }
@@ -169,51 +173,42 @@ export default function Dashboard() {
                         User
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Images
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        IP:Port
+                        Available Images
                       </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {dosClients.map((client) => (
-                      <tr key={client.name}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {client.name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            client.online ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                          }`}>
-                            {client.online ? 'Online' : 'Offline'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                          {client.images.length > 0 ? (
-                            <div className="space-y-1">
-                              {client.images.map((img) => (
-                                <button
-                                  key={img}
-                                  onClick={() => setSelectedImage({ owner: client.name, image: img })}
-                                  className="block text-blue-600 hover:text-blue-800 hover:underline"
-                                >
-                                  {img}
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-gray-400">No images</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
-                          {client.ip}:{client.port}
-                        </td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      console.log('[UI DEBUG] Rendering DOS table with', dosClients.length, 'clients');
+                      console.log('[UI DEBUG] Clients to render:', dosClients.map(c => ({ name: c.name, images: c.images.length })));
+                      return dosClients.map((client) => {
+                        console.log('[UI DEBUG] Rendering client row:', client.name);
+                        return (
+                          <tr key={client.name}>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {client.name}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-500">
+                              {client.images.length > 0 ? (
+                                <div className="space-y-1">
+                                  {client.images.map((img) => (
+                                    <button
+                                      key={img}
+                                      onClick={() => setSelectedImage({ owner: client.name, image: img })}
+                                      className="block text-blue-600 hover:text-blue-800 hover:underline"
+                                    >
+                                      {img}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-gray-400">No images</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
