@@ -338,28 +338,61 @@ async fn handle_join_tcp(
         s.dos_c_version += 1;
     }
 
-    // Send JOIN_ACK
-    println!("[HANDLE_JOIN_TCP] Sending JOIN_ACK to {}", peer_addr);
-    {
-        // Manual send to ensure visibility and remove ambiguity
-        let mut msg = Vec::new();
-        let total_len: u32 = 1; // msg_type only, no payload
-        msg.extend(total_len.to_le_bytes());
-        msg.push(client_protocol::JOIN_ACK);
+    // Build DOS-C payload for JOIN_ACK
+    let dos_payload = {
+        let s = state.read().await;
+        let mut payload = Vec::new();
 
-        let mut s = stream.lock().await;
-        s.write_all(&msg).await?;
-        s.flush().await?;
+        // DOS version (u64)
+        payload.extend(s.dos_c_version.to_le_bytes());
 
-        println!(
-            "[TCP-SEND-JOIN_ACK] to {} len_prefix={} total_len={} msg_type={} payload_len=0 bytes={:02x?}",
-            s.peer_addr().unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0))),
-            total_len,
-            total_len,
-            client_protocol::JOIN_ACK,
-            msg
-        );
-    }
+        // Number of clients (u32)
+        let num_clients = s.dos_clients.len() as u32;
+        payload.extend(num_clients.to_le_bytes());
+
+        println!("[HANDLE_JOIN_TCP] Building DOS-C: version={}, num_clients={}", s.dos_c_version, num_clients);
+
+        // For each client
+        for (client_name, client) in &s.dos_clients {
+            // Username
+            let name_bytes = client_name.as_bytes();
+            payload.extend((name_bytes.len() as u16).to_le_bytes());
+            payload.extend_from_slice(name_bytes);
+
+            // IP address
+            let ip_bytes = client.client_ip.as_bytes();
+            payload.extend((ip_bytes.len() as u16).to_le_bytes());
+            payload.extend_from_slice(ip_bytes);
+
+            // Port (u16)
+            payload.extend(client.client_port.to_le_bytes());
+
+            // Number of images (u32)
+            payload.extend((client.images.len() as u32).to_le_bytes());
+
+            // Image names
+            for img in &client.images {
+                let img_bytes = img.as_bytes();
+                payload.extend((img_bytes.len() as u16).to_le_bytes());
+                payload.extend_from_slice(img_bytes);
+            }
+
+            // Online status (u8: 1 = online, 0 = offline)
+            payload.push(if client.online { 1 } else { 0 });
+
+            // Last seen timestamp (u64)
+            payload.extend(client.last_seen.to_le_bytes());
+
+            println!("[HANDLE_JOIN_TCP]   - {} ({}:{}) images={:?} online={}",
+                client_name, client.client_ip, client.client_port, client.images, client.online);
+        }
+
+        payload
+    };
+
+    // Send JOIN_ACK with DOS-C payload
+    println!("[HANDLE_JOIN_TCP] Sending JOIN_ACK with DOS-C ({} bytes) to {}", dos_payload.len(), peer_addr);
+    send_tcp_response(stream.clone(), client_protocol::JOIN_ACK, &dos_payload).await?;
 
     // Notify leader to write to Firebase
     if let Err(e) = notify_leader_add_client(cfg, &username, peer_addr.ip().to_string(), client_port, images).await {
