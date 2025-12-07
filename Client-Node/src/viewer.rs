@@ -46,7 +46,8 @@ pub async fn send_view_request(
         s.username.clone()
     };
 
-    println!("[VIEWER] Requesting image '{}' from owner '{}' (views={})", image_name, owner, requested_views);
+    println!("[VIEWER] Sending VIEW_REQUEST: req_id={}, owner={}, image={}, views={}",
+             request_id, owner, image_name, requested_views);
 
     // Build payload
     let mut payload = Vec::new();

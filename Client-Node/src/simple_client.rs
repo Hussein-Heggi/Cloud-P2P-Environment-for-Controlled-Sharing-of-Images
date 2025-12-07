@@ -431,6 +431,8 @@ pub async fn run_listener(
                     0 // Default if not provided
                 };
 
+                println!("[OWNER] VIEW_NOTIFICATION received: viewer={}, image={}, req_id={}, views={}",
+                         viewer_name, image_name, req_id, requested_views);
                 println!("\n📩 [VIEW NOTIFICATION] {} wants to view image: {}", viewer_name, image_name);
                 println!("   Request ID: {}", req_id);
                 println!("   Requested views: {}", requested_views);
@@ -453,6 +455,7 @@ pub async fn run_listener(
                     s.pending_view_requests.insert(req_id, pending_req);
                 }
 
+                println!("[OWNER] Stored pending request in state");
                 println!("   💡 View pending requests via web UI at http://localhost:3000/dashboard");
             }
 
