@@ -72,6 +72,10 @@ pub struct ServerState {
     pub dos_clients: HashMap<String, DosClient>,  // username -> client info
     pub dos_access: HashMap<String, DosAccess>,   // access_id -> access record
     pub dos_c_version: u32,                        // Incremented on DOS changes
+
+    // ---- TCP Connection Registry ----
+    pub client_connections: HashMap<String, Arc<tokio::sync::Mutex<tokio::net::TcpStream>>>, // username -> active TCP connection
+
     // ---- Owner image uploads (TCP stego pipeline) ----
     // owner -> image_name -> buffers
     pub owner_images: HashMap<String, HashMap<String, StoredImageAssets>>,
@@ -99,6 +103,7 @@ impl Default for ServerState {
             dos_clients: HashMap::new(),
             dos_access: HashMap::new(),
             dos_c_version: 0,
+            client_connections: HashMap::new(),
             owner_images: HashMap::new(),
             pending_requests: HashMap::new(),
         }
@@ -124,6 +129,7 @@ impl ServerState {
             dos_clients: HashMap::new(),
             dos_access: HashMap::new(),
             dos_c_version: 0,
+            client_connections: HashMap::new(),
             owner_images: HashMap::new(),
             pending_requests: HashMap::new(),
         }

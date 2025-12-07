@@ -61,6 +61,9 @@ async fn handle_client_connection(
     // Store stream in state for sending responses
     let stream = Arc::new(tokio::sync::Mutex::new(stream));
 
+    // Track username for this connection (set when JOIN is received)
+    let mut connected_username: Option<String> = None;
+
     let mut buf = vec![0u8; 65536];
 
     loop {
@@ -107,6 +110,20 @@ async fn handle_client_connection(
         let msg_type = data[0];
         let payload = data[1..].to_vec(); // Clone payload for 'static lifetime
 
+        // Check if this is a JOIN message to track username
+        if msg_type == crate::client_protocol::JOIN && connected_username.is_none() {
+            // Parse username from JOIN payload
+            if payload.len() >= 2 {
+                let username_len = u16::from_le_bytes([payload[0], payload[1]]) as usize;
+                if payload.len() >= 2 + username_len {
+                    if let Ok(username) = String::from_utf8(payload[2..2 + username_len].to_vec()) {
+                        connected_username = Some(username.clone());
+                        println!("[CONNECTION] Client {} connected from {}", username, peer_addr);
+                    }
+                }
+            }
+        }
+
         // Route message to appropriate handler synchronously so responses are sent
         // on the same task without any scheduling delay/races.
         if let Err(e) = route_client_message(
@@ -120,6 +137,24 @@ async fn handle_client_connection(
             warn!(%peer_addr, msg_type, error=%e, "Message handler error");
             break;
         }
+    }
+
+    // Cleanup on disconnect
+    if let Some(username) = connected_username {
+        println!("[CONNECTION] Client {} disconnected from {}", username, peer_addr);
+
+        let mut s = state.write().await;
+        s.client_connections.remove(&username);
+
+        // Mark client as offline in dos_clients
+        if let Some(client) = s.dos_clients.get_mut(&username) {
+            client.online = false;
+        }
+
+        // Increment DOS version to signal change
+        s.dos_c_version += 1;
+
+        println!("[CONNECTION] Removed connection for {} from registry", username);
     }
 
     Ok(())
@@ -353,6 +388,10 @@ async fn handle_join_tcp(
             },
         );
         s.dos_c_version += 1;
+
+        // Store TCP connection in registry
+        s.client_connections.insert(username.clone(), stream.clone());
+        println!("[HANDLE_JOIN_TCP] Stored TCP connection for {} in registry", username);
     }
 
     // Build MINIMAL DOS-C payload for JOIN_ACK (v2.0)
@@ -537,13 +576,156 @@ async fn handle_dos_query_tcp(
 
 async fn handle_view_request_tcp(
     state: SharedState,
-    cfg: &Config,
-    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    _cfg: &Config,
+    viewer_stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
-    let temp_sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-    client_protocol::handle_view_request(state, cfg, &temp_sock, peer_addr, data).await
+    // Parse VIEW_REQUEST: [req_id:u32][viewer_len:u16][viewer][owner_len:u16][owner]
+    //                      [image_name_len:u16][image_name][requested_views:u32]
+    let mut offset = 0;
+
+    if data.len() < 4 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short"));
+    }
+
+    if data.len() < offset + 4 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for req_id"));
+    }
+    let req_id = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+    offset += 4;
+
+    println!("[SERVER] VIEW_REQUEST received: req_id={} from {}", req_id, peer_addr);
+
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for viewer_len"));
+    }
+    let viewer_len = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if data.len() < offset + viewer_len {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for viewer_name"));
+    }
+    let viewer_name = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
+    offset += viewer_len;
+
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for owner_len"));
+    }
+    let owner_len = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if data.len() < offset + owner_len {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for owner_name"));
+    }
+    let owner_name = String::from_utf8(data[offset..offset + owner_len].to_vec())?;
+    offset += owner_len;
+
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for image_len"));
+    }
+    let image_name_len = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if data.len() < offset + image_name_len {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for image_name"));
+    }
+    let image_name = String::from_utf8(data[offset..offset + image_name_len].to_vec())?;
+    offset += image_name_len;
+
+    if data.len() < offset + 4 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for requested_views"));
+    }
+    let requested_views = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+
+    println!("[SERVER] VIEW_REQUEST details: viewer={}, owner={}, image={}, views={}",
+             viewer_name, owner_name, image_name, requested_views);
+
+    // Look up owner in dos_clients
+    println!("[SERVER] Looking up owner '{}' in dos_clients...", owner_name);
+
+    let (owner_client, owner_connection) = {
+        let s = state.read().await;
+
+        let owner_client = match s.dos_clients.get(&owner_name) {
+            Some(c) => c.clone(),
+            None => {
+                println!("[SERVER] ⚠️  Owner '{}' not found in dos_clients", owner_name);
+                // Send REJECTED to viewer
+                let mut resp = vec![crate::client_protocol::REJECTED];
+                resp.extend(req_id.to_le_bytes());
+                let reason = "Owner not found";
+                resp.extend((reason.len() as u16).to_le_bytes());
+                resp.extend(reason.as_bytes());
+                send_tcp_response(viewer_stream, crate::client_protocol::REJECTED, &resp[1..]).await?;
+                return Ok(());
+            }
+        };
+
+        let owner_connection = s.client_connections.get(&owner_name).cloned();
+
+        (owner_client, owner_connection)
+    };
+
+    println!("[SERVER] Owner found: ip={}, port={}, online={}, connected={}",
+             owner_client.client_ip, owner_client.client_port, owner_client.online,
+             owner_connection.is_some());
+
+    // Check if owner is connected
+    let owner_stream = match owner_connection {
+        Some(stream) => stream,
+        None => {
+            println!("[SERVER] ⚠️  Owner '{}' not connected (no active TCP connection)", owner_name);
+            // Send REJECTED to viewer
+            let mut resp = vec![crate::client_protocol::REJECTED];
+            resp.extend(req_id.to_le_bytes());
+            let reason = "Owner not connected";
+            resp.extend((reason.len() as u16).to_le_bytes());
+            resp.extend(reason.as_bytes());
+            send_tcp_response(viewer_stream, crate::client_protocol::REJECTED, &resp[1..]).await?;
+            return Ok(());
+        }
+    };
+
+    // Create pending request
+    {
+        let mut s = state.write().await;
+        s.pending_requests.insert(req_id, crate::state::PendingRequest {
+            req_id,
+            executor_ip: peer_addr.ip(),
+            req_type: crate::state::RequestType::View,
+            owner_name: owner_name.clone(),
+            viewer_name: viewer_name.clone(),
+            image_name: image_name.clone(),
+            initiated_at: client_protocol::now_ms(),
+        });
+    }
+
+    // Build VIEW_NOTIFICATION payload
+    let mut notif = Vec::new();
+    notif.extend((viewer_name.len() as u16).to_le_bytes());
+    notif.extend(viewer_name.as_bytes());
+    notif.extend((image_name.len() as u16).to_le_bytes());
+    notif.extend(image_name.as_bytes());
+    notif.extend(req_id.to_le_bytes());
+    notif.extend(requested_views.to_le_bytes());
+
+    // Send VIEW_NOTIFICATION to owner via TCP
+    println!("[SERVER] Sending VIEW_NOTIFICATION to owner '{}' via TCP...", owner_name);
+    if let Err(e) = send_tcp_response(owner_stream, crate::client_protocol::VIEW_NOTIFICATION, &notif).await {
+        println!("[SERVER] ⚠️  Failed to send VIEW_NOTIFICATION to owner: {}", e);
+        // Send REJECTED to viewer
+        let mut resp = vec![crate::client_protocol::REJECTED];
+        resp.extend(req_id.to_le_bytes());
+        let reason = "Failed to notify owner";
+        resp.extend((reason.len() as u16).to_le_bytes());
+        resp.extend(reason.as_bytes());
+        send_tcp_response(viewer_stream, crate::client_protocol::REJECTED, &resp[1..]).await?;
+        return Ok(());
+    }
+
+    println!("[SERVER] ✅ VIEW_NOTIFICATION sent to owner '{}'", owner_name);
+    Ok(())
 }
 
 async fn handle_deny_view_tcp(
