@@ -125,6 +125,16 @@ async fn handle_client_connection(
     Ok(())
 }
 
+fn save_embedded(owner: &str, image: &str, data: &[u8]) -> Result<()> {
+    use std::fs;
+    use std::path::Path;
+    let dir = Path::new("received");
+    fs::create_dir_all(dir)?;
+    let path = dir.join(format!("{}_{}_embedded.png", owner, image));
+    fs::write(path, data)?;
+    Ok(())
+}
+
 /// Route client message to appropriate handler
 async fn route_client_message(
     msg_type: u8,
@@ -363,7 +373,7 @@ async fn handle_join_tcp(
 async fn handle_client_ping_tcp(
     state: SharedState,
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
-    peer_addr: SocketAddr,
+    _peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
     // Parse username
@@ -462,6 +472,9 @@ async fn handle_approve_view_tcp(
             &assets.cover_buf,
             &assets.meta_buf,
         )?;
+        if let Err(e) = save_embedded(&owner, &image_name, &embedded) {
+            warn!(error=%e, "Failed to save embedded image locally");
+        }
         println!(
             "[APPROVE_VIEW] Sending embedded image back to client owner={} image={} size={}",
             owner,
@@ -570,7 +583,8 @@ async fn handle_owner_image_chunk(
 
     let kind = payload[offset];
     offset += 1;
-    offset += 4; // offset field ignored for now
+    let chunk_offset = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
+    offset += 4;
 
     let data_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
     offset += 2;
@@ -579,7 +593,7 @@ async fn handle_owner_image_chunk(
     }
     let data = &payload[offset..offset + data_len];
 
-    if let Some(assets) = owner_image::append_chunk(state.clone(), &owner, &image_name, kind, data).await {
+    if let Some(assets) = owner_image::append_chunk(state.clone(), &owner, &image_name, kind, chunk_offset, data).await {
         if assets.ready() {
             println!(
                 "[OWNER_IMAGE_CHUNK] Upload complete owner={} image={} (true={} cover={} meta={})",
@@ -589,6 +603,9 @@ async fn handle_owner_image_chunk(
                 assets.cover_buf.len(),
                 assets.meta_buf.len()
             );
+            if let Err(e) = save_raw_assets(&owner, &image_name, &assets) {
+                warn!(error=%e, "Failed to save raw assets locally");
+            }
         }
     }
 
@@ -618,6 +635,20 @@ async fn send_embedded_image(
         payload.extend(chunk);
         send_tcp_response(stream.clone(), client_protocol::IMAGE_CHUNK, &payload).await?;
     }
+    Ok(())
+}
+
+fn save_raw_assets(owner: &str, image: &str, assets: &StoredImageAssets) -> Result<()> {
+    use std::fs;
+    use std::path::Path;
+    let dir = Path::new("received");
+    fs::create_dir_all(dir)?;
+    let true_path = dir.join(format!("{}_{}_true.png", owner, image));
+    let cover_path = dir.join(format!("{}_{}_cover.png", owner, image));
+    let meta_path = dir.join(format!("{}_{}_meta.json", owner, image));
+    fs::write(true_path, &assets.true_buf)?;
+    fs::write(cover_path, &assets.cover_buf)?;
+    fs::write(meta_path, &assets.meta_buf)?;
     Ok(())
 }
 async fn notify_leader_add_client(

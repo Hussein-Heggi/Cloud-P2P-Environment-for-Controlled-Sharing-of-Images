@@ -9,10 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::signal;
 use tokio::net::TcpSocket;
 use tokio::sync::RwLock;
 
 use crate::protocol::*;
+use crate::dos::DosState;
+use crate::viewer::{PendingRequest, DownloadedImage};
+use crate::owner::PendingViewRequest;
 
 /// Fixed client listen/advertised port for TCP
 pub const CLIENT_PORT: u16 = 9080;
@@ -26,6 +30,13 @@ pub struct ClientState {
     pub images: Vec<String>,
     pub joined: bool,
     pub dos_version: u32,
+    pub dos: DosState,
+    // Viewer side: track my outgoing requests
+    pub my_requests: HashMap<u32, PendingRequest>,
+    // Owner side: track incoming view requests
+    pub pending_view_requests: HashMap<u32, PendingViewRequest>,
+    // Track downloaded images
+    pub downloads: Vec<DownloadedImage>,
 }
 
 impl ClientState {
@@ -37,11 +48,21 @@ impl ClientState {
             images: Vec::new(),
             joined: false,
             dos_version: 0,
+            dos: DosState::new(),
+            my_requests: HashMap::new(),
+            pending_view_requests: HashMap::new(),
+            downloads: Vec::new(),
         }
     }
 }
 
 pub type SharedClientState = Arc<RwLock<ClientState>>;
+
+#[derive(Default)]
+struct IncomingImage {
+    total_chunks: u32,
+    chunks: HashMap<u32, Vec<u8>>,
+}
 
 async fn send_tcp_message_generic<W: AsyncWrite + Unpin>(
     stream: &mut W,
@@ -155,13 +176,30 @@ pub async fn join_server(
     };
 
     match result {
-        Ok(Ok((msg_type, _payload))) => {
+        Ok(Ok((msg_type, payload))) => {
             if msg_type == JOIN_ACK {
                 println!("[CLIENT] ✅ JOIN_ACK received from server");
 
-                // Update state
-                let mut s = state.write().await;
-                s.joined = true;
+                // Parse DOS-C from payload
+                match crate::dos::parse_dos_c_from_join_ack(&payload) {
+                    Ok((clients, dos_version)) => {
+                        println!("[CLIENT] Parsed DOS-C: {} clients, version {}", clients.len(), dos_version);
+
+                        // Update state with DOS-C
+                        let mut s = state.write().await;
+                        s.joined = true;
+                        s.dos.update(clients, dos_version);
+                        s.dos_version = dos_version as u32;
+
+                        println!("[CLIENT] DOS-C updated successfully");
+                    }
+                    Err(e) => {
+                        println!("[CLIENT] ⚠️  Failed to parse DOS-C from JOIN_ACK: {}", e);
+                        // Still mark as joined, but DOS will be empty
+                        let mut s = state.write().await;
+                        s.joined = true;
+                    }
+                }
 
                 Ok(())
             } else {
@@ -220,7 +258,7 @@ pub async fn ping_loop(
 
 /// Run the client listener (receives messages from server)
 pub async fn run_listener(
-    _state: SharedClientState,
+    state: SharedClientState,
     mut reader: tokio::net::tcp::OwnedReadHalf,
     writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
 ) -> Result<()> {
@@ -251,7 +289,7 @@ pub async fn run_listener(
             SERVER_PONG => {
                 if data.len() >= 4 {
                     let dos_version = u32::from_le_bytes(data[0..4].try_into().unwrap());
-                    let mut s = _state.write().await;
+                    let mut s = state.write().await;
                     let old_version = s.dos_version;
                     s.dos_version = dos_version;
                     if dos_version != old_version {
@@ -265,7 +303,7 @@ pub async fn run_listener(
             }
 
             VIEW_NOTIFICATION => {
-                // Parse: [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name][req_id:u32]
+                // Parse: [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name][req_id:u32][requested_views:u32]
                 let mut offset = 0;
 
                 if data.len() < offset + 2 {
@@ -306,34 +344,91 @@ pub async fn run_listener(
                 }
 
                 let req_id = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+                offset += 4;
+
+                // Parse requested_views (if present in payload)
+                let requested_views = if data.len() >= offset + 4 {
+                    u32::from_le_bytes(data[offset..offset + 4].try_into()?)
+                } else {
+                    0 // Default if not provided
+                };
 
                 println!("\n📩 [VIEW NOTIFICATION] {} wants to view image: {}", viewer_name, image_name);
                 println!("   Request ID: {}", req_id);
-                println!("   Action: Auto-approving (demo mode)");
+                println!("   Requested views: {}", requested_views);
+                println!("   Status: ⏳ Pending owner approval (use HTTP API to approve/deny)");
 
-                // Auto-approve for demo
-                let mut response_payload = Vec::new();
-                response_payload.extend(req_id.to_le_bytes());
+                // Store in pending requests for owner to handle via web UI
+                let pending_req = crate::owner::PendingViewRequest {
+                    request_id: req_id,
+                    viewer: viewer_name.clone(),
+                    image_name: image_name.clone(),
+                    requested_views,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                };
 
-                let mut s = writer.lock().await;
-                if let Err(e) = send_tcp_message_generic(&mut *s, APPROVE_VIEW, &response_payload).await {
-                    println!("   ⚠️  Failed to send APPROVE_VIEW: {}", e);
-                } else {
-                    println!("   ✅ APPROVE_VIEW sent");
+                {
+                    let mut s = state.write().await;
+                    s.pending_view_requests.insert(req_id, pending_req);
                 }
+
+                println!("   💡 View pending requests via web UI at http://localhost:3000/dashboard");
             }
 
             DOS_UPDATE => {
-                println!("[CLIENT-LISTENER] DOS_UPDATE received - clients/access lists updated");
-                // In full implementation, would update local DOS-C here
+                println!("[CLIENT-LISTENER] DOS_UPDATE received - refreshing DOS-C");
+
+                // Parse DOS-C from payload (same format as JOIN_ACK)
+                match crate::dos::parse_dos_c_from_join_ack(&data) {
+                    Ok((clients, dos_version)) => {
+                        println!("[CLIENT] Parsed updated DOS-C: {} clients, version {}", clients.len(), dos_version);
+
+                        // Update state with new DOS-C
+                        let mut s = state.write().await;
+                        s.dos.update(clients, dos_version);
+                        s.dos_version = dos_version as u32;
+
+                        println!("[CLIENT] DOS-C refreshed successfully");
+                    }
+                    Err(e) => {
+                        println!("[CLIENT] ⚠️  Failed to parse DOS-C from DOS_UPDATE: {}", e);
+                    }
+                }
             }
 
             REJECTED => {
-                println!("[CLIENT-LISTENER] ⚠️  Request REJECTED by server");
+                // Parse: [req_id:u32] or [req_id:u32][reason_len:u16][reason]
+                if data.len() >= 4 {
+                    let req_id = u32::from_le_bytes(data[0..4].try_into()?);
+                    println!("[CLIENT-LISTENER] ⚠️  Request {} REJECTED", req_id);
+
+                    // Update request status
+                    let mut s = state.write().await;
+                    if let Some(req) = s.my_requests.get_mut(&req_id) {
+                        req.status = crate::viewer::RequestStatus::Rejected;
+                    }
+                } else {
+                    println!("[CLIENT-LISTENER] REJECTED message too short");
+                }
             }
 
             APPROVED => {
-                println!("[CLIENT-LISTENER] ✅ Request APPROVED by owner - waiting for image chunks");
+                // Parse: [req_id:u32]
+                if data.len() >= 4 {
+                    let req_id = u32::from_le_bytes(data[0..4].try_into()?);
+                    println!("[CLIENT-LISTENER] ✅ Request {} APPROVED by owner - waiting for image chunks", req_id);
+
+                    // Update request status
+                    let mut s = state.write().await;
+                    if let Some(req) = s.my_requests.get_mut(&req_id) {
+                        req.status = crate::viewer::RequestStatus::Approved;
+                    }
+                } else {
+                    println!("[CLIENT-LISTENER] APPROVED message too short");
+                }
             }
 
             IMAGE_CHUNK => {
@@ -381,11 +476,15 @@ pub async fn run_listener(
                             break;
                         }
                     }
-                    let path = format!("/tmp/received_{}.png", name);
-                    if let Err(e) = tokio::fs::write(&path, &assembled).await {
-                        println!("[CLIENT-LISTENER] Failed to write image {}: {}", path, e);
-                    } else {
-                        println!("[CLIENT-LISTENER] ✅ Image {} assembled and saved to {}", name, path);
+                    let dir = "received";
+                    if let Err(e) = tokio::fs::create_dir_all(dir).await {
+                        println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
+                    }
+
+                    let path = format!("{}/{}.png", dir, name);
+                    match tokio::fs::write(&path, &assembled).await {
+                        Ok(_) => println!("[CLIENT-LISTENER] ✅ Image {} assembled and saved to {}", name, path),
+                        Err(e) => println!("[CLIENT-LISTENER] Failed to write image {}: {}", path, e),
                     }
                 }
             }
@@ -428,6 +527,7 @@ pub async fn upload_owner_image(
     true_path: &str,
     cover_path: &str,
     meta_path: &str,
+    stay_open: bool,
 ) -> Result<()> {
     let true_bytes = fs::read(true_path).await
         .with_context(|| format!("Failed to read true image {}", true_path))?;
@@ -468,7 +568,8 @@ pub async fn upload_owner_image(
             payload.extend((image.len() as u16).to_le_bytes());
             payload.extend(image.as_bytes());
             payload.push(kind);
-            payload.extend((idx as u32).to_le_bytes()); // offset placeholder
+            let byte_offset = (idx * chunk_size) as u32;
+            payload.extend(byte_offset.to_le_bytes());
             payload.extend((chunk.len() as u16).to_le_bytes());
             payload.extend(chunk);
             let mut w = writer.lock().await;
@@ -481,15 +582,130 @@ pub async fn upload_owner_image(
     send_chunk(&writer, username, image_name, 1, &cover_bytes).await?;
     send_chunk(&writer, username, image_name, 2, &meta_bytes).await?;
 
-    // Read a few acks (optional)
-    let _ = tokio::time::timeout(Duration::from_millis(500), recv_tcp_message_generic(&mut reader)).await;
-
     println!(
-        "[OWNER-UPLOAD] Uploaded image '{}' (true={} bytes, cover={} bytes, meta={} bytes)",
+        "[OWNER-UPLOAD] Uploaded image '{}' (true={} bytes, cover={} bytes, meta={})",
         image_name,
         true_bytes.len(),
         cover_bytes.len(),
         meta_bytes.len()
     );
+
+    if stay_open {
+        println!("[OWNER-UPLOAD] Keeping connection open. Press Ctrl+C to exit.");
+        loop {
+            tokio::select! {
+                _ = signal::ctrl_c() => {
+                    println!("[OWNER-UPLOAD] Ctrl+C received, closing connection.");
+                    break;
+                }
+                recv = recv_tcp_message_generic(&mut reader) => {
+                    match recv {
+                        Ok((msg_type, payload)) => {
+                            println!("[OWNER-UPLOAD-RECV] msg_type={} payload_len={}", msg_type, payload.len());
+                        }
+                        Err(e) => {
+                            println!("[OWNER-UPLOAD] Connection closed or error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Briefly check for acks then exit
+        let _ = tokio::time::timeout(Duration::from_millis(500), recv_tcp_message_generic(&mut reader)).await;
+    }
+
+    Ok(())
+}
+
+/// Approve a view and receive the embedded image back
+pub async fn approve_and_receive(
+    username: &str,
+    server_addr: SocketAddr,
+    image_name: &str,
+    req_id: u32,
+) -> Result<()> {
+    let (mut reader, writer) = connect_to_server(server_addr).await?;
+    println!("[APPROVE] Connected as {}", username);
+
+    // Send JOIN first to register
+    let state = Arc::new(tokio::sync::RwLock::new(ClientState::new(username.to_string(), server_addr)));
+    {
+        let mut st = state.write().await;
+        st.client_port = CLIENT_PORT;
+        st.joined = true;
+    }
+
+    // Build APPROVE_VIEW: [req_id:u32]
+    let mut payload = Vec::new();
+    payload.extend(req_id.to_le_bytes());
+    {
+        let mut w = writer.lock().await;
+        send_tcp_message_generic(&mut *w, APPROVE_VIEW, &payload).await?;
+    }
+    println!("[APPROVE] Sent APPROVE_VIEW req_id={} image={}", req_id, image_name);
+
+    // Listen for IMAGE_CHUNKs until Ctrl+C
+    let mut images: HashMap<String, IncomingImage> = HashMap::new();
+    loop {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                println!("[APPROVE] Ctrl+C received, exiting.");
+                break;
+            }
+            msg = recv_tcp_message_generic(&mut reader) => {
+                match msg {
+                    Ok((msg_type, data)) => {
+                        if msg_type == IMAGE_CHUNK {
+                            // reuse the listener logic
+                            let mut offset = 0;
+                            if data.len() < 2 { continue; }
+                            let name_len = u16::from_le_bytes(data[offset..offset+2].try_into().unwrap()) as usize;
+                            offset += 2;
+                            if data.len() < offset + name_len + 4 + 4 + 2 { continue; }
+                            let name = String::from_utf8(data[offset..offset+name_len].to_vec()).unwrap_or_else(|_| "img".into());
+                            offset += name_len;
+                            let seq = u32::from_le_bytes(data[offset..offset+4].try_into().unwrap());
+                            offset += 4;
+                            let total = u32::from_le_bytes(data[offset..offset+4].try_into().unwrap());
+                            offset += 4;
+                            let chunk_len = u16::from_le_bytes(data[offset..offset+2].try_into().unwrap()) as usize;
+                            offset += 2;
+                            if data.len() < offset + chunk_len { continue; }
+                            let chunk = data[offset..offset+chunk_len].to_vec();
+                            let entry = images.entry(name.clone()).or_insert_with(|| IncomingImage { total_chunks: total, chunks: HashMap::new() });
+                            entry.total_chunks = total;
+                            entry.chunks.insert(seq, chunk);
+                            if entry.chunks.len() as u32 == entry.total_chunks {
+                                let mut assembled = Vec::new();
+                                for i in 0..entry.total_chunks {
+                                    if let Some(c) = entry.chunks.get(&i) {
+                                        assembled.extend_from_slice(c);
+                                    }
+                                }
+                                let dir = "received";
+                                let _ = fs::create_dir_all(dir).await;
+                                let path = format!("{}/{}.png", dir, name);
+                                if let Err(e) = fs::write(&path, &assembled).await {
+                                    println!("[APPROVE] Failed to write image {}: {}", path, e);
+                                } else {
+                                    println!("[APPROVE] ✅ Received and saved {}", path);
+                                    break;
+                                }
+                            }
+                        } else {
+                            println!("[APPROVE] Received msg_type={} payload_len={}", msg_type, data.len());
+                        }
+                    }
+                    Err(e) => {
+                        println!("[APPROVE] Connection closed/error: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }

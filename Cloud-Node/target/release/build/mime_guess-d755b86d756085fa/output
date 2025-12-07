@@ -1,1 +1,0 @@
-cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/g7/Desktop/Distributed/Cloud-P2P-Environment-for-Controlled-Sharing-of-Images/Cloud-Node/target/release/build/mime_guess-d755b86d756085fa/out/mime_types_generated.rs

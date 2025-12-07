@@ -32,16 +32,35 @@ pub async fn append_chunk(
     owner: &str,
     image_name: &str,
     kind: u8,
+    offset: usize,
     data: &[u8],
 ) -> Option<StoredImageAssets> {
     let mut s = state.write().await;
     if let Some(imgs) = s.owner_images.get_mut(owner) {
         if let Some(entry) = imgs.get_mut(image_name) {
-            match kind {
-                0 => entry.true_buf.extend_from_slice(data),
-                1 => entry.cover_buf.extend_from_slice(data),
-                2 => entry.meta_buf.extend_from_slice(data),
-                _ => {}
+            let target = match kind {
+                0 => {
+                    if entry.true_buf.is_empty() {
+                        entry.true_buf.resize(entry.true_expected, 0);
+                    }
+                    &mut entry.true_buf
+                }
+                1 => {
+                    if entry.cover_buf.is_empty() {
+                        entry.cover_buf.resize(entry.cover_expected, 0);
+                    }
+                    &mut entry.cover_buf
+                }
+                2 => {
+                    if entry.meta_buf.is_empty() {
+                        entry.meta_buf.resize(entry.meta_expected, 0);
+                    }
+                    &mut entry.meta_buf
+                }
+                _ => return None,
+            };
+            if offset + data.len() <= target.len() {
+                target[offset..offset + data.len()].copy_from_slice(data);
             }
             if entry.ready() {
                 return Some(entry.clone());
