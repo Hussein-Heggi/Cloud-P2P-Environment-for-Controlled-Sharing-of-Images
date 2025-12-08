@@ -163,10 +163,11 @@ async fn handle_client_connection(
 fn save_embedded(owner: &str, image: &str, data: &[u8]) -> Result<()> {
     use std::fs;
     use std::path::Path;
-    let dir = Path::new("received");
+    let dir = Path::new("embedded");
     fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}_{}_embedded.png", owner, image));
-    fs::write(path, data)?;
+    let path = dir.join(format!("{}_{}_encrypted.png", owner, image));
+    fs::write(&path, data)?;
+    println!("[SAVE_EMBEDDED] 💾 Saved to: {}", path.display());
     Ok(())
 }
 
@@ -800,24 +801,94 @@ async fn handle_owner_image_chunk(
     if let Some(assets) = owner_image::append_chunk(state.clone(), &owner, &image_name, kind, chunk_offset, data).await {
         if assets.ready() {
             println!(
-                "[OWNER_IMAGE_CHUNK] Upload complete owner={} image={} (true={} cover={} meta={})",
-                owner,
-                image_name,
-                assets.true_buf.len(),
-                assets.cover_buf.len(),
+                "╔════════════════════════════════════════════════════════════════╗"
+            );
+            println!(
+                "║ [OWNER UPLOAD] All chunks received for {}/{}",
+                owner, image_name
+            );
+            println!(
+                "║ - True image size: {} bytes",
+                assets.true_buf.len()
+            );
+            println!(
+                "║ - Cover image size: {} bytes",
+                assets.cover_buf.len()
+            );
+            println!(
+                "║ - Metadata size: {} bytes",
                 assets.meta_buf.len()
             );
+            println!(
+                "╚════════════════════════════════════════════════════════════════╝"
+            );
+
+            // Save raw assets to server's received/ directory
             if let Err(e) = save_raw_assets(&owner, &image_name, &assets) {
                 warn!(error=%e, "Failed to save raw assets locally");
+            } else {
+                println!("[OWNER UPLOAD] ✅ Raw assets saved to Cloud-Node/received/");
             }
+
+            // Perform steganographic encryption
+            println!("[OWNER UPLOAD] 🔐 Starting encryption for {}/{}...", owner, image_name);
+            match crate::stego_service::embed_meta_return_png(
+                &assets.true_buf,
+                &assets.cover_buf,
+                &assets.meta_buf,
+            ) {
+                Ok(encrypted_png) => {
+                    println!(
+                        "[OWNER UPLOAD] ✅ Encryption complete! Size: {} bytes",
+                        encrypted_png.len()
+                    );
+
+                    // Save encrypted image on server
+                    if let Err(e) = save_embedded(&owner, &image_name, &encrypted_png) {
+                        warn!(error=%e, "Failed to save encrypted image on server");
+                    } else {
+                        println!("[OWNER UPLOAD] ✅ Encrypted image saved to Cloud-Node/embedded/");
+                    }
+
+                    // Send encrypted image back to owner
+                    println!("[OWNER UPLOAD] 📤 Sending encrypted image back to owner...");
+                    if let Err(e) = send_embedded_image(stream.clone(), &image_name, &encrypted_png).await {
+                        warn!(error=%e, "Failed to send encrypted image to owner");
+                    } else {
+                        println!("[OWNER UPLOAD] ✅ Encrypted image sent to owner successfully!");
+                        println!(
+                            "╔════════════════════════════════════════════════════════════════╗"
+                        );
+                        println!(
+                            "║ ENCRYPTION COMPLETE: {}/{}",
+                            owner, image_name
+                        );
+                        println!(
+                            "║ Owner should receive and save encrypted image locally"
+                        );
+                        println!(
+                            "╚════════════════════════════════════════════════════════════════╝"
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[OWNER UPLOAD] ❌ Encryption failed: {}", e);
+                    warn!(error=%e, "Failed to encrypt owner image");
+                }
+            }
+        } else {
+            // Still receiving chunks - just ack
+            let mut ack = Vec::new();
+            ack.extend(0u32.to_le_bytes());
+            send_tcp_response(stream, client_protocol::SERVER_PONG, &ack).await?;
         }
+    } else {
+        // No assets found or chunk failed - just ack
+        let mut ack = Vec::new();
+        ack.extend(0u32.to_le_bytes());
+        send_tcp_response(stream, client_protocol::SERVER_PONG, &ack).await?;
     }
 
-    // For now, acknowledge with SERVER_PONG (reuse) to keep client aware
-    let mut ack = Vec::new();
-    ack.extend(0u32.to_le_bytes()); // dummy payload
-    send_tcp_response(stream, client_protocol::SERVER_PONG, &ack).await?;
-    println!("[OWNER_IMAGE_CHUNK] ack sent to {}", peer_addr);
     Ok(())
 }
 
@@ -850,9 +921,12 @@ fn save_raw_assets(owner: &str, image: &str, assets: &StoredImageAssets) -> Resu
     let true_path = dir.join(format!("{}_{}_true.png", owner, image));
     let cover_path = dir.join(format!("{}_{}_cover.png", owner, image));
     let meta_path = dir.join(format!("{}_{}_meta.json", owner, image));
-    fs::write(true_path, &assets.true_buf)?;
-    fs::write(cover_path, &assets.cover_buf)?;
-    fs::write(meta_path, &assets.meta_buf)?;
+    fs::write(&true_path, &assets.true_buf)?;
+    fs::write(&cover_path, &assets.cover_buf)?;
+    fs::write(&meta_path, &assets.meta_buf)?;
+    println!("[SAVE_RAW] 💾 True image: {}", true_path.display());
+    println!("[SAVE_RAW] 💾 Cover image: {}", cover_path.display());
+    println!("[SAVE_RAW] 💾 Metadata: {}", meta_path.display());
     Ok(())
 }
 async fn notify_leader_add_client(

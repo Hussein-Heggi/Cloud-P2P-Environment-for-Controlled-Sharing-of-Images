@@ -554,26 +554,61 @@ pub async fn run_listener(
                 entry.chunks.insert(seq, chunk);
 
                 if entry.chunks.len() as u32 == entry.total_chunks {
+                    println!(
+                        "╔════════════════════════════════════════════════════════════════╗"
+                    );
+                    println!(
+                        "║ [RECEIVE IMAGE] All {} chunks received for '{}'",
+                        entry.total_chunks, name
+                    );
+
                     // Assemble in order
                     let mut assembled = Vec::new();
                     for i in 0..entry.total_chunks {
                         if let Some(c) = entry.chunks.get(&i) {
                             assembled.extend_from_slice(c);
                         } else {
-                            println!("[CLIENT-LISTENER] Missing chunk {} for {}", i, name);
+                            println!("[CLIENT-LISTENER] ❌ Missing chunk {} for {}", i, name);
                             break;
                         }
                     }
-                    let dir = "received";
+
+                    // Save to encrypted_images directory
+                    let dir = "encrypted_images";
                     if let Err(e) = tokio::fs::create_dir_all(dir).await {
                         println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
                     }
 
-                    let path = format!("{}/{}.png", dir, name);
+                    let path = format!("{}/{}_encrypted.png", dir, name);
                     match tokio::fs::write(&path, &assembled).await {
-                        Ok(_) => println!("[CLIENT-LISTENER] ✅ Image {} assembled and saved to {}", name, path),
-                        Err(e) => println!("[CLIENT-LISTENER] Failed to write image {}: {}", path, e),
+                        Ok(_) => {
+                            println!(
+                                "║ ✅ Image assembled: {} bytes",
+                                assembled.len()
+                            );
+                            println!(
+                                "║ 💾 Saved to: {}",
+                                path
+                            );
+                            println!(
+                                "╠════════════════════════════════════════════════════════════════╣"
+                            );
+                            println!(
+                                "║ LOCATION: Client-Node/{}",
+                                path
+                            );
+                            println!(
+                                "║ You can view this encrypted image at the path above"
+                            );
+                            println!(
+                                "╚════════════════════════════════════════════════════════════════╝"
+                            );
+                        },
+                        Err(e) => println!("[CLIENT-LISTENER] ❌ Failed to write image {}: {}", path, e),
                     }
+
+                    // Clean up from images map
+                    images.remove(&name);
                 }
             }
 
@@ -617,16 +652,34 @@ pub async fn upload_owner_image(
     meta_path: &str,
     stay_open: bool,
 ) -> Result<()> {
+    println!(
+        "╔════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║ [OWNER UPLOAD] Starting upload for image: {}",
+        image_name
+    );
+    println!(
+        "╚════════════════════════════════════════════════════════════════╝"
+    );
+
+    println!("[OWNER UPLOAD] 📂 Reading files...");
     let true_bytes = fs::read(true_path).await
         .with_context(|| format!("Failed to read true image {}", true_path))?;
+    println!("[OWNER UPLOAD]   ✅ True image: {} ({} bytes)", true_path, true_bytes.len());
+
     let cover_bytes = fs::read(cover_path).await
         .with_context(|| format!("Failed to read cover image {}", cover_path))?;
+    println!("[OWNER UPLOAD]   ✅ Cover image: {} ({} bytes)", cover_path, cover_bytes.len());
+
     let meta_bytes = fs::read(meta_path).await
         .with_context(|| format!("Failed to read metadata {}", meta_path))?;
+    println!("[OWNER UPLOAD]   ✅ Metadata: {} ({} bytes)", meta_path, meta_bytes.len());
 
     let (mut reader, writer) = connect_to_server(server_addr).await?;
 
     // META message
+    println!("[OWNER UPLOAD] 📤 Sending metadata to server...");
     let mut meta_payload = Vec::new();
     meta_payload.extend((username.len() as u16).to_le_bytes());
     meta_payload.extend(username.as_bytes());
@@ -639,6 +692,7 @@ pub async fn upload_owner_image(
         let mut w = writer.lock().await;
         send_tcp_message_generic(&mut *w, OWNER_IMAGE_META, &meta_payload).await?;
     }
+    println!("[OWNER UPLOAD] ✅ Metadata sent");
 
     // Chunk helper
     async fn send_chunk(
@@ -666,16 +720,46 @@ pub async fn upload_owner_image(
         Ok(())
     }
 
+    println!("[OWNER UPLOAD] 📤 Sending image chunks to server...");
+    println!("[OWNER UPLOAD]   📦 Sending true image chunks...");
     send_chunk(&writer, username, image_name, 0, &true_bytes).await?;
+    println!("[OWNER UPLOAD]   ✅ True image chunks sent");
+
+    println!("[OWNER UPLOAD]   📦 Sending cover image chunks...");
     send_chunk(&writer, username, image_name, 1, &cover_bytes).await?;
+    println!("[OWNER UPLOAD]   ✅ Cover image chunks sent");
+
+    println!("[OWNER UPLOAD]   📦 Sending metadata chunks...");
     send_chunk(&writer, username, image_name, 2, &meta_bytes).await?;
+    println!("[OWNER UPLOAD]   ✅ Metadata chunks sent");
 
     println!(
-        "[OWNER-UPLOAD] Uploaded image '{}' (true={} bytes, cover={} bytes, meta={})",
-        image_name,
-        true_bytes.len(),
-        cover_bytes.len(),
+        "╔════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║ [OWNER UPLOAD] ✅ All data sent to server!"
+    );
+    println!(
+        "║ Image: {}",
+        image_name
+    );
+    println!(
+        "║ - True: {} bytes",
+        true_bytes.len()
+    );
+    println!(
+        "║ - Cover: {} bytes",
+        cover_bytes.len()
+    );
+    println!(
+        "║ - Metadata: {} bytes",
         meta_bytes.len()
+    );
+    println!(
+        "║ Server will now encrypt and send back encrypted image..."
+    );
+    println!(
+        "╚════════════════════════════════════════════════════════════════╝"
     );
 
     if stay_open {
