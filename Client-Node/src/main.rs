@@ -77,8 +77,8 @@ async fn main() -> Result<()> {
         }
 
         "upload" => {
-            if args.len() < 8 {
-                println!("Usage: {} upload <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path>", args[0]);
+            if args.len() < 7 {
+                println!("Usage: {} upload <username> <server_ip:port> <image_name> <true_path> <cover_path>", args[0]);
                 return Ok(());
             }
             let username = args[2].clone();
@@ -86,8 +86,7 @@ async fn main() -> Result<()> {
             let image_name = args[4].clone();
             let true_path = args[5].clone();
             let cover_path = args[6].clone();
-            let meta_path = args[7].clone();
-            simple_client::upload_owner_image(&username, server_addr, &image_name, &true_path, &cover_path, &meta_path, true).await?;
+            simple_client::upload_owner_image(&username, server_addr, &image_name, &true_path, &cover_path, true).await?;
         }
 
         "approve" => {
@@ -103,8 +102,8 @@ async fn main() -> Result<()> {
         }
 
         "upload-and-fetch" => {
-            if args.len() < 8 {
-                println!("Usage: {} upload-and-fetch <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path> [req_id]", args[0]);
+            if args.len() < 7 {
+                println!("Usage: {} upload-and-fetch <username> <server_ip:port> <image_name> <true_path> <cover_path> [req_id]", args[0]);
                 return Ok(());
             }
             let username = args[2].clone();
@@ -112,11 +111,10 @@ async fn main() -> Result<()> {
             let image_name = args[4].clone();
             let true_path = args[5].clone();
             let cover_path = args[6].clone();
-            let meta_path = args[7].clone();
-            let req_id: u32 = if args.len() > 8 { args[8].parse().unwrap_or(1) } else { 1 };
+            let req_id: u32 = if args.len() > 7 { args[7].parse().unwrap_or(1) } else { 1 };
 
             // Upload (briefly, no stay-open)
-            simple_client::upload_owner_image(&username, server_addr, &image_name, &true_path, &cover_path, &meta_path, false).await?;
+            simple_client::upload_owner_image(&username, server_addr, &image_name, &true_path, &cover_path, false).await?;
             // Then approve and fetch
             simple_client::approve_and_receive(&username, server_addr, &image_name, req_id).await?;
         }
@@ -317,9 +315,9 @@ fn print_usage() {
     println!("  cargo run -- join <username> <server_ip:port> [COVER] [actual1] [actual2] ...");
     println!("  cargo run -- listen <username> <server_ip:port>");
     println!("  cargo run -- interactive <username> <server_ip:port> [COVER] [actual1] [actual2] ...");
-    println!("  cargo run -- upload <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path>");
+    println!("  cargo run -- upload <username> <server_ip:port> <image_name> <true_path> <cover_path>");
     println!("  cargo run -- approve <username> <server_ip:port> <image_name> <req_id>");
-    println!("  cargo run -- upload-and-fetch <username> <server_ip:port> <image_name> <true_path> <cover_path> <meta_json_path> [req_id]");
+    println!("  cargo run -- upload-and-fetch <username> <server_ip:port> <image_name> <true_path> <cover_path> [req_id]");
     println!();
     println!("IMAGE ARGUMENT FORMAT:");
     println!("  First image = COVER image (used for steganography, not shareable)");
@@ -341,9 +339,9 @@ fn print_usage() {
     println!("  # Listen mode (receive messages only)");
     println!("  cargo run -- listen charlie 10.40.61.79:9000");
     println!();
-    println!("  # Upload owner image + cover + metadata");
-    println!("  cargo run -- upload alice 10.40.61.79:9000 secret secret.png cover.png meta.json");
+    println!("  # Upload owner image + cover (server encrypts and sends back)");
+    println!("  cargo run -- upload alice 10.40.61.79:9000 secret secret.png cover.png");
     println!("  # Upload and immediately fetch embedded image");
-    println!("  cargo run -- upload-and-fetch alice 10.40.61.79:9000 secret secret.png cover.png meta.json 1");
+    println!("  cargo run -- upload-and-fetch alice 10.40.61.79:9000 secret secret.png cover.png 1");
     println!();
 }

@@ -642,14 +642,14 @@ pub async fn connect_to_server(server_addr: SocketAddr) -> Result<(tokio::net::t
     Ok((read_half, Arc::new(tokio::sync::Mutex::new(write_half))))
 }
 
-/// Owner upload: send true image, cover image, and metadata to server
+/// Owner upload: send true image and cover image to server (NO metadata)
+/// Server encrypts true image into cover and sends back encrypted image
 pub async fn upload_owner_image(
     username: &str,
     server_addr: SocketAddr,
     image_name: &str,
     true_path: &str,
     cover_path: &str,
-    meta_path: &str,
     stay_open: bool,
 ) -> Result<()> {
     println!(
@@ -671,15 +671,12 @@ pub async fn upload_owner_image(
     let cover_bytes = fs::read(cover_path).await
         .with_context(|| format!("Failed to read cover image {}", cover_path))?;
     println!("[OWNER UPLOAD]   ✅ Cover image: {} ({} bytes)", cover_path, cover_bytes.len());
-
-    let meta_bytes = fs::read(meta_path).await
-        .with_context(|| format!("Failed to read metadata {}", meta_path))?;
-    println!("[OWNER UPLOAD]   ✅ Metadata: {} ({} bytes)", meta_path, meta_bytes.len());
+    println!("[OWNER UPLOAD]   ℹ️  Server will encrypt true image into cover (no metadata sent)");
 
     let (mut reader, writer) = connect_to_server(server_addr).await?;
 
-    // META message
-    println!("[OWNER UPLOAD] 📤 Sending metadata to server...");
+    // META message (with meta_size = 0, no metadata sent)
+    println!("[OWNER UPLOAD] 📤 Sending image sizes to server...");
     let mut meta_payload = Vec::new();
     meta_payload.extend((username.len() as u16).to_le_bytes());
     meta_payload.extend(username.as_bytes());
@@ -687,12 +684,12 @@ pub async fn upload_owner_image(
     meta_payload.extend(image_name.as_bytes());
     meta_payload.extend((true_bytes.len() as u32).to_le_bytes());
     meta_payload.extend((cover_bytes.len() as u32).to_le_bytes());
-    meta_payload.extend((meta_bytes.len() as u32).to_le_bytes());
+    meta_payload.extend(0u32.to_le_bytes()); // meta_size = 0 (no metadata)
     {
         let mut w = writer.lock().await;
         send_tcp_message_generic(&mut *w, OWNER_IMAGE_META, &meta_payload).await?;
     }
-    println!("[OWNER UPLOAD] ✅ Metadata sent");
+    println!("[OWNER UPLOAD] ✅ Image sizes sent");
 
     // Chunk helper
     async fn send_chunk(
@@ -729,10 +726,6 @@ pub async fn upload_owner_image(
     send_chunk(&writer, username, image_name, 1, &cover_bytes).await?;
     println!("[OWNER UPLOAD]   ✅ Cover image chunks sent");
 
-    println!("[OWNER UPLOAD]   📦 Sending metadata chunks...");
-    send_chunk(&writer, username, image_name, 2, &meta_bytes).await?;
-    println!("[OWNER UPLOAD]   ✅ Metadata chunks sent");
-
     println!(
         "╔════════════════════════════════════════════════════════════════╗"
     );
@@ -744,19 +737,15 @@ pub async fn upload_owner_image(
         image_name
     );
     println!(
-        "║ - True: {} bytes",
+        "║ - True image: {} bytes",
         true_bytes.len()
     );
     println!(
-        "║ - Cover: {} bytes",
+        "║ - Cover image: {} bytes",
         cover_bytes.len()
     );
     println!(
-        "║ - Metadata: {} bytes",
-        meta_bytes.len()
-    );
-    println!(
-        "║ Server will now encrypt and send back encrypted image..."
+        "║ Server will encrypt true image into cover and send back..."
     );
     println!(
         "╚════════════════════════════════════════════════════════════════╝"

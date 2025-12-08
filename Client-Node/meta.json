@@ -1,0 +1,7 @@
+{
+  "owner": "bob",
+  "viewer": "bob",
+  "image_name": "secret",
+  "remaining_views": 5,
+  "image_uuid": "test-uuid-123"
+}
