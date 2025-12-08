@@ -163,12 +163,16 @@ pub struct StoredImageAssets {
     pub true_buf: Vec<u8>,
     pub cover_buf: Vec<u8>,
     pub meta_buf: Vec<u8>,
+    // Track bytes actually received (not just buffer size)
+    pub true_received: usize,
+    pub cover_received: usize,
+    pub meta_received: usize,
 }
 
 impl StoredImageAssets {
     pub fn ready(&self) -> bool {
-        self.true_buf.len() == self.true_expected
-            && self.cover_buf.len() == self.cover_expected
-            && self.meta_buf.len() == self.meta_expected
+        self.true_received == self.true_expected
+            && self.cover_received == self.cover_expected
+            && self.meta_received == self.meta_expected
     }
 }

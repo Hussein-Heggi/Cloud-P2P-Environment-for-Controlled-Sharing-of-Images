@@ -832,6 +832,8 @@ async fn handle_owner_image_chunk(
 
             // Perform steganographic encryption
             println!("[OWNER UPLOAD] 🔐 Starting encryption for {}/{}...", owner, image_name);
+
+            // NO metadata generation on server - pass empty buffer as-is
             match crate::stego_service::embed_meta_return_png(
                 &assets.true_buf,
                 &assets.cover_buf,
@@ -875,6 +877,13 @@ async fn handle_owner_image_chunk(
                     eprintln!("[OWNER UPLOAD] ❌ Encryption failed: {}", e);
                     warn!(error=%e, "Failed to encrypt owner image");
                 }
+            }
+
+            // CRITICAL: Remove the entry from state to prevent re-processing
+            println!("[OWNER UPLOAD] 🧹 Cleaning up state for {}/{}", owner, image_name);
+            let mut s = state.write().await;
+            if let Some(imgs) = s.owner_images.get_mut(&owner) {
+                imgs.remove(&image_name);
             }
         } else {
             // Still receiving chunks - just ack
@@ -920,13 +929,19 @@ fn save_raw_assets(owner: &str, image: &str, assets: &StoredImageAssets) -> Resu
     fs::create_dir_all(dir)?;
     let true_path = dir.join(format!("{}_{}_true.png", owner, image));
     let cover_path = dir.join(format!("{}_{}_cover.png", owner, image));
-    let meta_path = dir.join(format!("{}_{}_meta.json", owner, image));
     fs::write(&true_path, &assets.true_buf)?;
     fs::write(&cover_path, &assets.cover_buf)?;
-    fs::write(&meta_path, &assets.meta_buf)?;
     println!("[SAVE_RAW] 💾 True image: {}", true_path.display());
     println!("[SAVE_RAW] 💾 Cover image: {}", cover_path.display());
-    println!("[SAVE_RAW] 💾 Metadata: {}", meta_path.display());
+
+    // Only save metadata if it's not empty
+    if !assets.meta_buf.is_empty() {
+        let meta_path = dir.join(format!("{}_{}_meta.json", owner, image));
+        fs::write(&meta_path, &assets.meta_buf)?;
+        println!("[SAVE_RAW] 💾 Metadata: {}", meta_path.display());
+    } else {
+        println!("[SAVE_RAW] ℹ️  No metadata (0 bytes) - skipped saving");
+    }
     Ok(())
 }
 async fn notify_leader_add_client(
