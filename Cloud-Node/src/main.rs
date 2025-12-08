@@ -19,6 +19,7 @@ mod stego_service;
 mod tcp_client;
 mod udp;
 mod owner_image;
+mod access_map_storage;
 
 use crate::state::ServerState;
 

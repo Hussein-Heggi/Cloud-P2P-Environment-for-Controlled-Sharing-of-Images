@@ -115,22 +115,17 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
     let num_images = u32::from_le_bytes(data[offset..offset + 4].try_into()?) as usize;
     offset += 4;
 
-    let mut images = Vec::new();
+    let mut actual_images = Vec::new();
     for _ in 0..num_images {
         let img_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
         offset += 2;
         let img_name = String::from_utf8(data[offset..offset + img_len].to_vec())?;
         offset += img_len;
-        images.push(img_name);
+        actual_images.push(img_name);
     }
 
-    // Split images into cover and actual
-    // Wire format: cover first (if multiple), then actual images
-    let (cover_image, actual_images) = if images.len() > 1 {
-        (Some(images[0].clone()), images[1..].to_vec())
-    } else {
-        (None, images)
-    };
+    // NEW P2P Architecture: All images are actual_images (no cover split)
+    // Owner will provide cover per-request when encrypting
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -140,7 +135,6 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
         client_name: username.clone(),
         client_ip,
         client_port,
-        cover_image,
         actual_images,
         last_seen: now,
         online: true,

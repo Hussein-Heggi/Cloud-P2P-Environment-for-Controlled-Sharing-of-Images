@@ -983,45 +983,9 @@ use std::{
                 });
             }
 
-            // VIEW_REQUEST: Viewer requests access (type=12)
-            x if x == client_protocol::VIEW_REQUEST => {
-                info!(%peer, len=n-1, "Received VIEW_REQUEST from client");
-                let state_clone = state.clone();
-                let cfg_clone = cfg.clone();
-                let sock_clone = sock.clone();
-                let data = buf[1..n].to_vec();
-
-                tokio::spawn(async move {
-                    if let Err(e) = client_protocol::handle_view_request(
-                        state_clone,
-                        &cfg_clone,
-                        &*sock_clone,
-                        peer,
-                        &data,
-                    ).await {
-                        warn!("handle_view_request error: {}", e);
-                    }
-                });
-            }
-
-            // DENY_VIEW: Owner denies view request (type=18)
-            x if x == client_protocol::DENY_VIEW => {
-                info!(%peer, len=n-1, "Received DENY_VIEW from client");
-                let state_clone = state.clone();
-                let sock_clone = sock.clone();
-                let data = buf[1..n].to_vec();
-
-                tokio::spawn(async move {
-                    if let Err(e) = client_protocol::handle_deny_view(
-                        state_clone,
-                        &*sock_clone,
-                        peer,
-                        &data,
-                    ).await {
-                        warn!("handle_deny_view error: {}", e);
-                    }
-                });
-            }
+            // REMOVED: Old UDP server-mediated view request forwarding (replaced by P2P)
+            // VIEW_REQUEST and DENY_VIEW no longer handled by server via UDP
+            // Clients now communicate directly via P2P TCP connections
 
             // SYNC_USAGE: Client syncs offline usage (type=30)
             x if x == client_protocol::SYNC_USAGE => {
@@ -1057,7 +1021,8 @@ use std::{
  // ============================================================================
  
  
- async fn worker_task(
+ // DEPRECATED: Legacy server-mediated encryption (replaced by client-side P2P encryption)
+async fn worker_task(
     worker_id: usize,
     rx_jobs: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Job>>>,
     state: SharedState,
@@ -1065,8 +1030,8 @@ use std::{
     my_client_ip: IpAddr,
     response_sock: Arc<UdpSocket>,
  ) {
-    println!("[WORKER-{}] Started", worker_id);
-    debug!(worker_id, "Worker task started");
+    println!("[WORKER-{}] Started (DEPRECATED - P2P clients now handle encryption)", worker_id);
+    debug!(worker_id, "Worker task started (deprecated)");
  
  
     let pacing_us = cfg.pacing_us;
@@ -1259,6 +1224,7 @@ use std::{
         );
  
  
+        // DEPRECATED: Server-side stego encryption - use client-side P2P encryption instead
         let encrypted_png = match crate::stego_service::embed_meta_return_png(
             &true_image_buffer,
             &cover_image_buffer,

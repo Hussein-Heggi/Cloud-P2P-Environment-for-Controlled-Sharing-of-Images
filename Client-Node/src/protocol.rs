@@ -43,3 +43,18 @@ pub const VIEW_PERMISSION_GRANTED: u8 = 33;
 pub const VIEW_PERMISSION_DENIED: u8 = 34;
 pub const OWNER_IMAGE_META: u8 = 35;
 pub const OWNER_IMAGE_CHUNK: u8 = 36;
+
+// P2P Client-to-Client Messages (NEW for P2P architecture)
+pub const PEER_VIEW_REQUEST: u8 = 60;     // Viewer → Owner direct
+pub const PEER_VIEW_RESPONSE: u8 = 61;    // Owner → Viewer (approved)
+pub const PEER_VIEW_REJECTED: u8 = 62;    // Owner → Viewer (denied)
+pub const PEER_IMAGE_CHUNK: u8 = 63;      // Owner → Viewer (image data)
+pub const PEER_ADJUST_REQUEST: u8 = 64;   // Viewer → Owner (adjust views)
+pub const PEER_REVOKE: u8 = 65;           // Owner → Viewer (revoke access)
+pub const PEER_ACK: u8 = 66;              // Generic acknowledgment
+
+// Server Offline/Access Map Messages (NEW for P2P architecture)
+pub const OFFLINE_REQUESTS_QUERY: u8 = 53;    // Client → Server on startup
+pub const OFFLINE_REQUESTS_RESPONSE: u8 = 54; // Server → Client
+pub const ACCESS_MAP_QUERY: u8 = 55;          // Client → Server on startup
+pub const ACCESS_MAP_RESPONSE: u8 = 56;       // Server → Client

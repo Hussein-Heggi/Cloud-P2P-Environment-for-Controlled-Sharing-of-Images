@@ -15,20 +15,20 @@ use crate::executor_leader;
 pub const REQ: u8 = 10;                    // Client → Server: "I have a request"
 pub const ACCEPT: u8 = 11;                 // Server → Client: "I'm the executor"
 
-// Phase 2: Request details
-pub const VIEW_REQUEST: u8 = 12;           // Viewer → Executor: Request to view
-pub const ADJUST_REQUEST: u8 = 13;         // Viewer → Executor: Adjust view count
-pub const REVOKE_REQUEST: u8 = 14;         // Owner → Executor: Revoke access
+// Phase 2: Request details - DEPRECATED (replaced by P2P)
+pub const VIEW_REQUEST: u8 = 12;           // DEPRECATED: Viewer → Executor (use PEER_VIEW_REQUEST)
+pub const ADJUST_REQUEST: u8 = 13;         // DEPRECATED: Viewer → Executor (use PEER_ADJUST_REQUEST)
+pub const REVOKE_REQUEST: u8 = 14;         // DEPRECATED: Owner → Executor (use PEER_REVOKE)
 
-// Phase 3: Owner notifications
-pub const VIEW_NOTIFICATION: u8 = 15;      // Executor → Owner: Someone wants to view
-pub const ADJUST_NOTIFICATION: u8 = 16;    // Executor → Owner: Someone wants more views
+// Phase 3: Owner notifications (DEPRECATED - replaced by P2P)
+pub const VIEW_NOTIFICATION: u8 = 15;      // DEPRECATED: Executor → Owner: Someone wants to view
+pub const ADJUST_NOTIFICATION: u8 = 16;    // DEPRECATED: Executor → Owner: Someone wants more views
 
-// Phase 4: Owner responses
-pub const APPROVE_VIEW: u8 = 17;           // Owner → Executor: Approved with count
-pub const DENY_VIEW: u8 = 18;              // Owner → Executor: Denied
-pub const APPROVE_ADJUST: u8 = 19;         // Owner → Executor: Approved adjust
-pub const DENY_ADJUST: u8 = 20;            // Owner → Executor: Denied adjust
+// Phase 4: Owner responses - DEPRECATED (replaced by P2P)
+pub const APPROVE_VIEW: u8 = 17;           // DEPRECATED: Owner → Executor (use PEER_VIEW_RESPONSE)
+pub const DENY_VIEW: u8 = 18;              // DEPRECATED: Owner → Executor (use PEER_VIEW_REJECTED)
+pub const APPROVE_ADJUST: u8 = 19;         // DEPRECATED: Owner → Executor (use PEER_ACK)
+pub const DENY_ADJUST: u8 = 20;            // DEPRECATED: Owner → Executor (use PEER_VIEW_REJECTED)
 
 // Phase 5: Viewer responses
 pub const APPROVED: u8 = 21;               // Executor → Viewer: Approved, chunks coming
@@ -58,6 +58,21 @@ pub const VIEW_PERMISSION_DENIED: u8 = 34; // Executor → Client: No
 // Image upload from owner
 pub const OWNER_IMAGE_META: u8 = 35;       // Owner → Executor: Image metadata
 pub const OWNER_IMAGE_CHUNK: u8 = 36;      // Owner → Executor: Image chunk
+
+// P2P Client-to-Client Messages (NEW for P2P architecture)
+pub const PEER_VIEW_REQUEST: u8 = 60;     // Viewer → Owner direct
+pub const PEER_VIEW_RESPONSE: u8 = 61;    // Owner → Viewer (approved)
+pub const PEER_VIEW_REJECTED: u8 = 62;    // Owner → Viewer (denied)
+pub const PEER_IMAGE_CHUNK: u8 = 63;      // Owner → Viewer (image data)
+pub const PEER_ADJUST_REQUEST: u8 = 64;   // Viewer → Owner (adjust views)
+pub const PEER_REVOKE: u8 = 65;           // Owner → Viewer (revoke access)
+pub const PEER_ACK: u8 = 66;              // Generic acknowledgment
+
+// Server Offline/Access Map Messages (NEW for P2P architecture)
+pub const OFFLINE_REQUESTS_QUERY: u8 = 53;    // Client → Server on startup
+pub const OFFLINE_REQUESTS_RESPONSE: u8 = 54; // Server → Client
+pub const ACCESS_MAP_QUERY: u8 = 55;          // Client → Server on startup
+pub const ACCESS_MAP_RESPONSE: u8 = 56;       // Server → Client
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -330,7 +345,10 @@ pub async fn handle_client_ping(
     Ok(())
 }
 
-/// Handle VIEW_REQUEST: Viewer wants to view owner's image
+/// DEPRECATED: Old server-mediated view request handler (replaced by P2P)
+/// This function is no longer used in the P2P architecture
+/// Clients now use PEER_VIEW_REQUEST for direct peer-to-peer communication
+#[deprecated(note = "Replaced by P2P direct communication")]
 pub async fn handle_view_request(
     state: SharedState,
     _cfg: &Config,
@@ -437,7 +455,10 @@ pub async fn handle_view_request(
     Ok(())
 }
 
-/// Handle DENY_VIEW: Owner denies view request
+/// DEPRECATED: Old server-mediated deny view handler (replaced by P2P)
+/// This function is no longer used in the P2P architecture
+/// Owners now use PEER_VIEW_REJECTED for direct peer-to-peer communication
+#[deprecated(note = "Replaced by P2P direct communication")]
 pub async fn handle_deny_view(
     state: SharedState,
     sock: &UdpSocket,

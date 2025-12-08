@@ -4,11 +4,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// DOS Client entry - MINIMAL v2.0 format (name + actual_images only)
-/// Excludes: IP, port, last_seen, online (kept server-side only in DOS-S)
+/// DOS Client entry - P2P v3.0 format (name + IP + port + actual_images)
+/// NEW: Includes IP and port for direct P2P connections
+/// Excludes: last_seen, online (kept server-side only in DOS-S)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DosClient {
     pub client_name: String,
+    /// NEW P2P: Client IP address for direct connection
+    pub client_ip: String,
+    /// NEW P2P: Client listen port for P2P requests
+    pub client_port: u16,
     /// Actual images only (no cover image)
     pub images: Vec<String>,
 }
@@ -88,10 +93,11 @@ impl DosState {
     }
 }
 
-/// Parse MINIMAL DOS-C v2.0 from JOIN_ACK payload
+/// Parse P2P DOS-C v3.0 from JOIN_ACK payload
 /// Format: [dos_c_version:u64][num_clients:u32][client_entries...]
-/// Each client entry (MINIMAL): [name_len:u16][name][num_images:u32][image_entries...]
-/// Excluded: IP, port, last_seen, online, cover_image (kept server-side)
+/// Each client entry (P2P): [name_len:u16][name][ip_len:u16][ip][port:u16][num_images:u32][image_entries...]
+/// NEW: Includes IP and port for P2P connections
+/// Excluded: last_seen, online, cover_image (kept server-side)
 pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<String, DosClient>, u64)> {
     if payload.len() < 12 {
         return Err(anyhow::anyhow!("JOIN_ACK payload too small: {} bytes", payload.len()));
@@ -107,7 +113,7 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
     let num_clients = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
     offset += 4;
 
-    println!("[DOS] Parsing MINIMAL DOS-C v2.0: version={} num_clients={}", dos_c_version, num_clients);
+    println!("[DOS] Parsing P2P DOS-C v3.0: version={} num_clients={}", dos_c_version, num_clients);
 
     let mut clients = HashMap::new();
 
@@ -126,6 +132,29 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
 
         let client_name = String::from_utf8(payload[offset..offset + name_len].to_vec())?;
         offset += name_len;
+
+        // NEW P2P: Parse client IP
+        if offset + 2 > payload.len() {
+            return Err(anyhow::anyhow!("Unexpected end at IP length for client {}", i));
+        }
+
+        let ip_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+        offset += 2;
+
+        if offset + ip_len > payload.len() {
+            return Err(anyhow::anyhow!("Invalid IP length at client {}", i));
+        }
+
+        let client_ip = String::from_utf8(payload[offset..offset + ip_len].to_vec())?;
+        offset += ip_len;
+
+        // NEW P2P: Parse client port
+        if offset + 2 > payload.len() {
+            return Err(anyhow::anyhow!("Unexpected end at port for client {}", i));
+        }
+
+        let client_port = u16::from_le_bytes(payload[offset..offset + 2].try_into()?);
+        offset += 2;
 
         // Parse number of images (actual images only, no cover)
         if offset + 4 > payload.len() {
@@ -154,20 +183,20 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
             images.push(image_name);
         }
 
-        // NO MORE FIELDS - minimal format ends here!
-        // (no IP, port, last_seen, online)
-
         let dos_client = DosClient {
             client_name: client_name.clone(),
+            client_ip: client_ip.clone(),
+            client_port,
             images,
         };
 
-        println!("[DOS] Parsed client: {} ({} actual images)", client_name, dos_client.images.len());
+        println!("[DOS] Parsed client: {} ({}:{}, {} actual images)",
+                 client_name, client_ip, client_port, dos_client.images.len());
 
         clients.insert(client_name, dos_client);
     }
 
-    println!("[DOS] Successfully parsed {} clients from MINIMAL DOS-C v2.0", clients.len());
+    println!("[DOS] Successfully parsed {} clients from P2P DOS-C v3.0", clients.len());
 
     Ok((clients, dos_c_version))
 }
@@ -185,6 +214,8 @@ mod tests {
             "alice".to_string(),
             DosClient {
                 client_name: "alice".to_string(),
+                client_ip: "192.168.1.100".to_string(),
+                client_port: 9080,
                 images: vec!["secret.png".to_string(), "photo.jpg".to_string()],
             },
         );
@@ -193,5 +224,7 @@ mod tests {
 
         assert_eq!(dos.get_version(), 1);
         assert_eq!(dos.list_images("alice").unwrap().len(), 2);
+        assert_eq!(dos.get_client("alice").unwrap().client_ip, "192.168.1.100");
+        assert_eq!(dos.get_client("alice").unwrap().client_port, 9080);
     }
 }

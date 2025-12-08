@@ -17,8 +17,9 @@ use crate::protocol::*;
 use crate::dos::DosState;
 use crate::viewer::{PendingRequest, DownloadedImage};
 use crate::owner::PendingViewRequest;
+use crate::local_access_map::LocalAccessMap;
 
-/// Fixed client listen/advertised port for TCP
+/// Fixed client listen/advertised port for TCP (starting port for P2P range)
 pub const CLIENT_PORT: u16 = 9080;
 
 /// Client state
@@ -26,7 +27,9 @@ pub const CLIENT_PORT: u16 = 9080;
 pub struct ClientState {
     pub username: String,
     pub server_addr: SocketAddr,
-    pub client_port: u16,
+    pub client_port: u16,  // Port registered with server (for backward compatibility)
+    /// NEW P2P: Actual P2P listen port (may differ from client_port due to port range binding)
+    pub p2p_port: u16,
     /// Cover image (first image in CLI args) - used for steganography, NOT shared in DOS-C
     pub cover_image: Option<String>,
     /// Actual images (remaining CLI args) - shareable images shown in DOS-C
@@ -40,6 +43,8 @@ pub struct ClientState {
     pub pending_view_requests: HashMap<u32, PendingViewRequest>,
     // Track downloaded images
     pub downloads: Vec<DownloadedImage>,
+    /// NEW P2P: Local access map for owner permissions
+    pub local_access_map: LocalAccessMap,
 }
 
 impl ClientState {
@@ -48,6 +53,7 @@ impl ClientState {
             username,
             server_addr,
             client_port: 0,
+            p2p_port: 0,  // Will be set when P2P listener starts
             cover_image: None,
             actual_images: Vec::new(),
             joined: false,
@@ -56,6 +62,7 @@ impl ClientState {
             my_requests: HashMap::new(),
             pending_view_requests: HashMap::new(),
             downloads: Vec::new(),
+            local_access_map: LocalAccessMap::new(),
         }
     }
 

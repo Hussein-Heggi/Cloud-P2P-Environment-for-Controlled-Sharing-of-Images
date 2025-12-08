@@ -8,15 +8,13 @@ use tracing::{debug, info, warn, error};
 use crate::state::SharedState;
 
 /// DOS-S Client entry - represents a registered client in the system
+/// NEW: Unified DOS (no more DOS-C) - includes IP for P2P connections
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DosClient {
     pub client_name: String,
-    pub client_ip: String,
-    pub client_port: u16,
-    /// Cover image (first image from JOIN) - used for steganography, NOT sent in DOS-C
-    #[serde(default)]
-    pub cover_image: Option<String>,
-    /// Actual images (remaining images from JOIN) - shareable, sent in DOS-C
+    pub client_ip: String,           // P2P connection IP
+    pub client_port: u16,             // P2P listen port
+    /// Actual images only (no cover image in unified DOS)
     #[serde(default, alias = "images")]  // Support OLD "images" field for migration
     pub actual_images: Vec<String>,
     pub last_seen: u64, // use u64 for Firestore compatibility
@@ -328,5 +326,98 @@ pub async fn cleanup_expired_access(db: &FirestoreDb, state: SharedState) -> Res
         }
     }
 
+    Ok(())
+}
+
+/// Add offline request to Firebase (NEW P2P architecture)
+/// Stores request when recipient is not online
+pub async fn add_offline_request(
+    db: &FirestoreDb,
+    request: &crate::state::OfflineRequest,
+) -> Result<String> {
+    use rand::Rng;
+
+    // Generate unique document ID: {recipient}_{timestamp}_{random}
+    let random_suffix: u32 = rand::thread_rng().gen();
+    let doc_id = format!("{}_{}_{}",
+        request.recipient,
+        request.timestamp,
+        random_suffix
+    );
+
+    debug!("Adding offline request {} to Firebase", doc_id);
+
+    db.fluent()
+        .insert()
+        .into("offline_requests")
+        .document_id(&doc_id)
+        .object(request)
+        .execute::<()>()
+        .await
+        .context("Failed to insert offline request to Firebase")?;
+
+    debug!("Offline request {} added successfully", doc_id);
+    Ok(doc_id)
+}
+
+/// Get all offline requests for a specific recipient
+pub async fn get_offline_requests(
+    db: &FirestoreDb,
+    recipient: &str,
+) -> Result<Vec<crate::state::OfflineRequest>> {
+    debug!("Fetching offline requests for recipient: {}", recipient);
+
+    // Get all offline requests and filter in memory
+    // (Firestore 0.41 has simplified query API)
+    let all_requests: Vec<crate::state::OfflineRequest> = db
+        .fluent()
+        .select()
+        .from("offline_requests")
+        .obj()
+        .query()
+        .await
+        .context("Failed to query offline requests from Firebase")?;
+
+    // Filter by recipient
+    let requests: Vec<crate::state::OfflineRequest> = all_requests
+        .into_iter()
+        .filter(|r| r.recipient == recipient)
+        .collect();
+
+    debug!("Fetched {} offline requests for {}", requests.len(), recipient);
+    Ok(requests)
+}
+
+/// Delete all offline requests for a recipient (after delivery)
+pub async fn delete_offline_requests(
+    db: &FirestoreDb,
+    recipient: &str,
+) -> Result<()> {
+    debug!("Deleting offline requests for recipient: {}", recipient);
+
+    // Get all documents with their IDs
+    let docs: Vec<(String, crate::state::OfflineRequest)> = db
+        .fluent()
+        .select()
+        .from("offline_requests")
+        .obj()
+        .query()
+        .await
+        .context("Failed to query offline requests")?;
+
+    // Filter and delete documents for this recipient
+    for (doc_id, request) in docs {
+        if request.recipient == recipient {
+            db.fluent()
+                .delete()
+                .from("offline_requests")
+                .document_id(&doc_id)
+                .execute()
+                .await
+                .with_context(|| format!("Failed to delete offline request {}", doc_id))?;
+        }
+    }
+
+    debug!("Deleted offline requests for {}", recipient);
     Ok(())
 }

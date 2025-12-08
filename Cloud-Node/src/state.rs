@@ -1,6 +1,7 @@
 use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use tokio::sync::RwLock;
 use firestore::FirestoreDb;
+use serde::{Deserialize, Serialize};
 
 use crate::firebase::{DosClient, DosAccess};
 
@@ -38,6 +39,17 @@ pub struct PendingRequest {
     pub viewer_name: String,
     pub image_name: String,
     pub initiated_at: u128,
+}
+
+/// Offline request stored when recipient is not online (NEW P2P architecture)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OfflineRequest {
+    pub request_type: String,        // "VIEW", "ADJUST", "REVOKE"
+    pub sender: String,
+    pub recipient: String,
+    pub image_name: String,
+    pub data: Vec<u8>,               // Full message bytes (for forwarding)
+    pub timestamp: u64,              // Unix timestamp in milliseconds
 }
 
 #[derive(Clone, Debug)]
@@ -82,6 +94,9 @@ pub struct ServerState {
 
     // ---- Pending Requests (new protocol) ----
     pub pending_requests: HashMap<u32, PendingRequest>, // req_id -> pending request
+
+    // ---- NEW P2P: Offline Requests Queue ----
+    pub offline_requests: HashMap<String, Vec<OfflineRequest>>, // recipient_username -> requests
 }
 
 impl Default for ServerState {
@@ -106,6 +121,7 @@ impl Default for ServerState {
             client_connections: HashMap::new(),
             owner_images: HashMap::new(),
             pending_requests: HashMap::new(),
+            offline_requests: HashMap::new(),
         }
     }
 }
@@ -132,6 +148,7 @@ impl ServerState {
             client_connections: HashMap::new(),
             owner_images: HashMap::new(),
             pending_requests: HashMap::new(),
+            offline_requests: HashMap::new(),
         }
     }
 }

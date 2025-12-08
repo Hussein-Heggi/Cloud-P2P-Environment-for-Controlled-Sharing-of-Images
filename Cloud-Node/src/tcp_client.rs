@@ -195,20 +195,9 @@ async fn route_client_message(
             handle_client_ping_tcp(state, stream, peer_addr, payload).await
         }
 
-        x if x == client_protocol::VIEW_REQUEST => {
-            info!(%peer_addr, len=payload.len(), "Received VIEW_REQUEST from client");
-            handle_view_request_tcp(state, &cfg, stream, peer_addr, payload).await
-        }
-
-        x if x == client_protocol::DENY_VIEW => {
-            info!(%peer_addr, len=payload.len(), "Received DENY_VIEW from client");
-            handle_deny_view_tcp(state, stream, peer_addr, payload).await
-        }
-
-        x if x == client_protocol::APPROVE_VIEW => {
-            info!(%peer_addr, len=payload.len(), "Received APPROVE_VIEW from client");
-            handle_approve_view_tcp(state, &cfg, stream, peer_addr, payload).await
-        }
+        // REMOVED: Old server-mediated view request forwarding (replaced by P2P)
+        // VIEW_REQUEST, DENY_VIEW, APPROVE_VIEW no longer handled by server
+        // Clients now communicate directly via P2P connections
 
         x if x == client_protocol::OWNER_IMAGE_META => {
             info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_META from client");
@@ -228,6 +217,16 @@ async fn route_client_message(
         x if x == client_protocol::DOS_QUERY => {
             info!(%peer_addr, len=payload.len(), "Received DOS_QUERY from client");
             handle_dos_query_tcp(state, stream, peer_addr, payload).await
+        }
+
+        x if x == client_protocol::OFFLINE_REQUESTS_QUERY => {
+            info!(%peer_addr, len=payload.len(), "Received OFFLINE_REQUESTS_QUERY from client");
+            handle_offline_requests_query(state, stream, peer_addr, payload).await
+        }
+
+        x if x == client_protocol::ACCESS_MAP_QUERY => {
+            info!(%peer_addr, len=payload.len(), "Received ACCESS_MAP_QUERY from client");
+            handle_access_map_query(state, stream, peer_addr, payload).await
         }
 
         _ => {
@@ -357,16 +356,11 @@ async fn handle_join_tcp(
 
     println!("[HANDLE_JOIN_TCP] ✅ Parsed: username={} port={} images={:?}", username, client_port, images);
 
-    // Split images into cover and actual
-    // If num_images > 1: first = cover, rest = actual
-    // If num_images == 1: single image = actual, no cover
-    let (cover_image, actual_images) = if images.len() > 1 {
-        (Some(images[0].clone()), images[1..].to_vec())
-    } else {
-        (None, images)
-    };
+    // NEW P2P Architecture: All images are actual_images (no cover split)
+    // Owner will provide cover per-request when encrypting
+    let actual_images = images;
 
-    println!("[HANDLE_JOIN_TCP] Split images: cover={:?}, actual={:?}", cover_image, actual_images);
+    println!("[HANDLE_JOIN_TCP] Registered images: actual={:?}", actual_images);
 
     // Register client in state
     let now_ms = std::time::SystemTime::now()
@@ -381,7 +375,6 @@ async fn handle_join_tcp(
                 client_name: username.clone(),
                 client_ip: peer_addr.ip().to_string(),
                 client_port: client_port,
-                cover_image: cover_image.clone(),
                 actual_images: actual_images.clone(),
                 online: true,
                 last_seen: now_ms,
@@ -394,9 +387,9 @@ async fn handle_join_tcp(
         println!("[HANDLE_JOIN_TCP] Stored TCP connection for {} in registry", username);
     }
 
-    // Build MINIMAL DOS-C payload for JOIN_ACK (v2.0)
-    // Excludes: requesting client (self-exclusion), IP, port, last_seen, online
-    // Includes: dos_version, name, actual_images only
+    // Build P2P DOS-C payload for JOIN_ACK (v3.0 - with IP/port for P2P)
+    // Excludes: requesting client (self-exclusion), last_seen, online
+    // Includes: dos_version, name, IP, port, actual_images
     let dos_payload = {
         let s = state.read().await;
         let mut payload = Vec::new();
@@ -415,15 +408,23 @@ async fn handle_join_tcp(
         let num_clients = clients_to_send.len() as u32;
         payload.extend(num_clients.to_le_bytes());
 
-        println!("[HANDLE_JOIN_TCP] Building MINIMAL DOS-C v2.0: version={}, num_clients={} (excluded: {})",
+        println!("[HANDLE_JOIN_TCP] Building P2P DOS-C v3.0: version={}, num_clients={} (excluded: {})",
                  dos_version_u64, num_clients, username);
 
-        // For each client (MINIMAL FORMAT: name + actual_images only)
+        // For each client (P2P FORMAT: name + IP + port + actual_images)
         for (client_name, client) in clients_to_send {
             // Username
             let name_bytes = client_name.as_bytes();
             payload.extend((name_bytes.len() as u16).to_le_bytes());
             payload.extend_from_slice(name_bytes);
+
+            // NEW P2P: Client IP (for direct connection)
+            let ip_bytes = client.client_ip.as_bytes();
+            payload.extend((ip_bytes.len() as u16).to_le_bytes());
+            payload.extend_from_slice(ip_bytes);
+
+            // NEW P2P: Client port (P2P listen port)
+            payload.extend(client.client_port.to_le_bytes());
 
             // Number of images (u32) - ONLY actual images (no cover)
             payload.extend((client.actual_images.len() as u32).to_le_bytes());
@@ -435,10 +436,8 @@ async fn handle_join_tcp(
                 payload.extend_from_slice(img_bytes);
             }
 
-            // NO IP, NO PORT, NO LAST_SEEN, NO ONLINE - minimal format!
-
-            println!("[HANDLE_JOIN_TCP]   ✅ {} -> actual_images={:?} (cover={:?} kept server-side)",
-                client_name, client.actual_images, client.cover_image);
+            println!("[HANDLE_JOIN_TCP]   ✅ {} -> ip={}, port={}, actual_images={:?}",
+                client_name, client.client_ip, client.client_port, client.actual_images);
         }
 
         payload
@@ -448,8 +447,8 @@ async fn handle_join_tcp(
     println!("[HANDLE_JOIN_TCP] Sending JOIN_ACK with DOS-C ({} bytes) to {}", dos_payload.len(), peer_addr);
     send_tcp_response(stream.clone(), client_protocol::JOIN_ACK, &dos_payload).await?;
 
-    // Notify leader to write to Firebase (send cover + actual images)
-    if let Err(e) = notify_leader_add_client(cfg, &username, peer_addr.ip().to_string(), client_port, cover_image.clone(), actual_images.clone()).await {
+    // Notify leader to write to Firebase (NEW P2P: only actual images, no cover)
+    if let Err(e) = notify_leader_add_client(cfg, &username, peer_addr.ip().to_string(), client_port, actual_images.clone()).await {
         warn!("Failed to notify leader about new client: {}", e);
     }
 
@@ -519,9 +518,9 @@ async fn handle_dos_query_tcp(
 
     println!("[DOS_QUERY] Request from {} ({})", username, peer_addr);
 
-    // Build MINIMAL DOS-C v2.0 payload (same format as JOIN_ACK)
-    // Excludes: requesting client (self-exclusion), IP, port, last_seen, online
-    // Includes: dos_version, name, actual_images only
+    // Build P2P DOS-C v3.0 payload (same format as JOIN_ACK)
+    // Excludes: requesting client (self-exclusion), last_seen, online
+    // Includes: dos_version, name, IP, port, actual_images
     let dos_payload = {
         let s = state.read().await;
         let mut payload = Vec::new();
@@ -540,15 +539,23 @@ async fn handle_dos_query_tcp(
         let num_clients = clients_to_send.len() as u32;
         payload.extend(num_clients.to_le_bytes());
 
-        println!("[DOS_QUERY] Building MINIMAL DOS-C v2.0: version={}, num_clients={} (excluded: {})",
+        println!("[DOS_QUERY] Building P2P DOS-C v3.0: version={}, num_clients={} (excluded: {})",
                  dos_version_u64, num_clients, username);
 
-        // For each client (MINIMAL FORMAT: name + actual_images only)
+        // For each client (P2P FORMAT: name + IP + port + actual_images)
         for (client_name, client) in clients_to_send {
             // Username
             let name_bytes = client_name.as_bytes();
             payload.extend((name_bytes.len() as u16).to_le_bytes());
             payload.extend_from_slice(name_bytes);
+
+            // NEW P2P: Client IP (for direct connection)
+            let ip_bytes = client.client_ip.as_bytes();
+            payload.extend((ip_bytes.len() as u16).to_le_bytes());
+            payload.extend_from_slice(ip_bytes);
+
+            // NEW P2P: Client port (P2P listen port)
+            payload.extend(client.client_port.to_le_bytes());
 
             // Number of images (u32) - ONLY actual images (no cover)
             payload.extend((client.actual_images.len() as u32).to_le_bytes());
@@ -560,8 +567,8 @@ async fn handle_dos_query_tcp(
                 payload.extend_from_slice(img_bytes);
             }
 
-            println!("[DOS_QUERY]   ✅ {} -> actual_images={:?}",
-                client_name, client.actual_images);
+            println!("[DOS_QUERY]   ✅ {} -> ip={}, port={}, actual_images={:?}",
+                client_name, client.client_ip, client.client_port, client.actual_images);
         }
 
         payload
@@ -574,229 +581,120 @@ async fn handle_dos_query_tcp(
     Ok(())
 }
 
-async fn handle_view_request_tcp(
+/// Handle OFFLINE_REQUESTS_QUERY: Client requests pending offline requests on startup
+async fn handle_offline_requests_query(
     state: SharedState,
-    _cfg: &Config,
-    viewer_stream: Arc<tokio::sync::Mutex<TcpStream>>,
-    peer_addr: SocketAddr,
-    data: &[u8],
-) -> Result<()> {
-    // Parse VIEW_REQUEST: [req_id:u32][viewer_len:u16][viewer][owner_len:u16][owner]
-    //                      [image_name_len:u16][image_name][requested_views:u32]
-    let mut offset = 0;
-
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short"));
-    }
-
-    if data.len() < offset + 4 {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for req_id"));
-    }
-    let req_id = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-    offset += 4;
-
-    println!("[SERVER] VIEW_REQUEST received: req_id={} from {}", req_id, peer_addr);
-
-    if data.len() < offset + 2 {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for viewer_len"));
-    }
-    let viewer_len = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
-    offset += 2;
-
-    if data.len() < offset + viewer_len {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for viewer_name"));
-    }
-    let viewer_name = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
-    offset += viewer_len;
-
-    if data.len() < offset + 2 {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for owner_len"));
-    }
-    let owner_len = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
-    offset += 2;
-
-    if data.len() < offset + owner_len {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for owner_name"));
-    }
-    let owner_name = String::from_utf8(data[offset..offset + owner_len].to_vec())?;
-    offset += owner_len;
-
-    if data.len() < offset + 2 {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for image_len"));
-    }
-    let image_name_len = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
-    offset += 2;
-
-    if data.len() < offset + image_name_len {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for image_name"));
-    }
-    let image_name = String::from_utf8(data[offset..offset + image_name_len].to_vec())?;
-    offset += image_name_len;
-
-    if data.len() < offset + 4 {
-        return Err(anyhow::anyhow!("VIEW_REQUEST too short for requested_views"));
-    }
-    let requested_views = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-
-    println!("[SERVER] VIEW_REQUEST details: viewer={}, owner={}, image={}, views={}",
-             viewer_name, owner_name, image_name, requested_views);
-
-    // Look up owner in dos_clients
-    println!("[SERVER] Looking up owner '{}' in dos_clients...", owner_name);
-
-    let (owner_client, owner_connection) = {
-        let s = state.read().await;
-
-        let owner_client = match s.dos_clients.get(&owner_name) {
-            Some(c) => c.clone(),
-            None => {
-                println!("[SERVER] ⚠️  Owner '{}' not found in dos_clients", owner_name);
-                // Send REJECTED to viewer
-                let mut resp = vec![crate::client_protocol::REJECTED];
-                resp.extend(req_id.to_le_bytes());
-                let reason = "Owner not found";
-                resp.extend((reason.len() as u16).to_le_bytes());
-                resp.extend(reason.as_bytes());
-                send_tcp_response(viewer_stream, crate::client_protocol::REJECTED, &resp[1..]).await?;
-                return Ok(());
-            }
-        };
-
-        let owner_connection = s.client_connections.get(&owner_name).cloned();
-
-        (owner_client, owner_connection)
-    };
-
-    println!("[SERVER] Owner found: ip={}, port={}, online={}, connected={}",
-             owner_client.client_ip, owner_client.client_port, owner_client.online,
-             owner_connection.is_some());
-
-    // Check if owner is connected
-    let owner_stream = match owner_connection {
-        Some(stream) => stream,
-        None => {
-            println!("[SERVER] ⚠️  Owner '{}' not connected (no active TCP connection)", owner_name);
-            // Send REJECTED to viewer
-            let mut resp = vec![crate::client_protocol::REJECTED];
-            resp.extend(req_id.to_le_bytes());
-            let reason = "Owner not connected";
-            resp.extend((reason.len() as u16).to_le_bytes());
-            resp.extend(reason.as_bytes());
-            send_tcp_response(viewer_stream, crate::client_protocol::REJECTED, &resp[1..]).await?;
-            return Ok(());
-        }
-    };
-
-    // Create pending request
-    {
-        let mut s = state.write().await;
-        s.pending_requests.insert(req_id, crate::state::PendingRequest {
-            req_id,
-            executor_ip: peer_addr.ip(),
-            req_type: crate::state::RequestType::View,
-            owner_name: owner_name.clone(),
-            viewer_name: viewer_name.clone(),
-            image_name: image_name.clone(),
-            initiated_at: client_protocol::now_ms(),
-        });
-    }
-
-    // Build VIEW_NOTIFICATION payload
-    let mut notif = Vec::new();
-    notif.extend((viewer_name.len() as u16).to_le_bytes());
-    notif.extend(viewer_name.as_bytes());
-    notif.extend((image_name.len() as u16).to_le_bytes());
-    notif.extend(image_name.as_bytes());
-    notif.extend(req_id.to_le_bytes());
-    notif.extend(requested_views.to_le_bytes());
-
-    // Send VIEW_NOTIFICATION to owner via TCP
-    println!("[SERVER] Sending VIEW_NOTIFICATION to owner '{}' via TCP...", owner_name);
-    if let Err(e) = send_tcp_response(owner_stream, crate::client_protocol::VIEW_NOTIFICATION, &notif).await {
-        println!("[SERVER] ⚠️  Failed to send VIEW_NOTIFICATION to owner: {}", e);
-        // Send REJECTED to viewer
-        let mut resp = vec![crate::client_protocol::REJECTED];
-        resp.extend(req_id.to_le_bytes());
-        let reason = "Failed to notify owner";
-        resp.extend((reason.len() as u16).to_le_bytes());
-        resp.extend(reason.as_bytes());
-        send_tcp_response(viewer_stream, crate::client_protocol::REJECTED, &resp[1..]).await?;
-        return Ok(());
-    }
-
-    println!("[SERVER] ✅ VIEW_NOTIFICATION sent to owner '{}'", owner_name);
-    Ok(())
-}
-
-async fn handle_deny_view_tcp(
-    state: SharedState,
-    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
-    peer_addr: SocketAddr,
-    data: &[u8],
-) -> Result<()> {
-    let temp_sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-    client_protocol::handle_deny_view(state, &temp_sock, peer_addr, data).await
-}
-
-async fn handle_approve_view_tcp(
-    state: SharedState,
-    _cfg: &Config,
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     data: &[u8],
 ) -> Result<()> {
-    // Parse request ID
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("APPROVE_VIEW too short"));
+    // Parse username
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("OFFLINE_REQUESTS_QUERY too short"));
     }
 
-    let req_id = u32::from_le_bytes(data[0..4].try_into()?);
+    let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
+    if data.len() < 2 + username_len {
+        return Err(anyhow::anyhow!("Invalid username length"));
+    }
 
-    println!("[APPROVE_VIEW] req_id={} from {}", req_id, peer_addr);
+    let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
 
-    // For now, pick the first ready image for this owner and send it back as IMAGE_CHUNK
-    let (owner, image_name, assets) = {
-        let s = state.read().await;
-        // naive: match peer IP string to client_ip in dos_clients
-        let owner_name = s
-            .dos_clients
-            .iter()
-            .find_map(|(name, c)| if c.client_ip == peer_addr.ip().to_string() { Some(name.clone()) } else { None })
-            .unwrap_or_else(|| "unknown".to_string());
+    println!("[OFFLINE_REQUESTS_QUERY] Request from user: {} ({})", username, peer_addr);
 
-        let ready = s.owner_images.get(&owner_name).and_then(|imgs| {
-            imgs.iter()
-                .find(|(_, v)| v.ready())
-                .map(|(name, v)| (owner_name.clone(), name.clone(), v.clone()))
-        });
-        ready.unwrap_or_else(|| (owner_name, "no_image".to_string(), crate::state::StoredImageAssets::default()))
+    // Get offline requests for this user
+    let requests = {
+        let mut s = state.write().await;
+        s.offline_requests.remove(&username).unwrap_or_default()
     };
 
-    if assets.ready() {
-        let embedded = crate::stego_service::embed_meta_return_png(
-            &assets.true_buf,
-            &assets.cover_buf,
-            &assets.meta_buf,
-        )?;
-        if let Err(e) = save_embedded(&owner, &image_name, &embedded) {
-            warn!(error=%e, "Failed to save embedded image locally");
-        }
-        println!(
-            "[APPROVE_VIEW] Sending embedded image back to client owner={} image={} size={}",
-            owner,
-            image_name,
-            embedded.len()
-        );
-        send_embedded_image(stream.clone(), &image_name, &embedded).await?;
-    } else {
-        println!(
-            "[APPROVE_VIEW] No ready image to send for owner={}, image={}",
-            owner, image_name
-        );
+    let num_requests = requests.len();
+    println!("[OFFLINE_REQUESTS_QUERY] Found {} offline requests for {}", num_requests, username);
+
+    // Build response payload
+    let mut payload = Vec::new();
+
+    // Number of requests
+    payload.extend((num_requests as u32).to_le_bytes());
+
+    // Each request: [type_len:u16][type][sender_len:u16][sender][image_len:u16][image][data_len:u32][data][timestamp:u64]
+    for req in requests {
+        // Request type
+        payload.extend((req.request_type.len() as u16).to_le_bytes());
+        payload.extend(req.request_type.as_bytes());
+
+        // Sender
+        payload.extend((req.sender.len() as u16).to_le_bytes());
+        payload.extend(req.sender.as_bytes());
+
+        // Image name
+        payload.extend((req.image_name.len() as u16).to_le_bytes());
+        payload.extend(req.image_name.as_bytes());
+
+        // Data
+        payload.extend((req.data.len() as u32).to_le_bytes());
+        payload.extend(&req.data);
+
+        // Timestamp
+        payload.extend(req.timestamp.to_le_bytes());
+
+        println!("[OFFLINE_REQUESTS_QUERY]   - type={}, sender={}, image={}",
+                 req.request_type, req.sender, req.image_name);
     }
 
+    // Send response
+    send_tcp_response(stream, client_protocol::OFFLINE_REQUESTS_RESPONSE, &payload).await?;
+
+    println!("[OFFLINE_REQUESTS_QUERY] Sent {} offline requests to {}", num_requests, username);
     Ok(())
 }
+
+/// Handle ACCESS_MAP_QUERY: Client requests access map on startup
+async fn handle_access_map_query(
+    _state: SharedState,
+    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    data: &[u8],
+) -> Result<()> {
+    // Parse username
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("ACCESS_MAP_QUERY too short"));
+    }
+
+    let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
+    if data.len() < 2 + username_len {
+        return Err(anyhow::anyhow!("Invalid username length"));
+    }
+
+    let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
+
+    println!("[ACCESS_MAP_QUERY] Request from user: {} ({})", username, peer_addr);
+
+    // Load access map from filesystem
+    let access_map = crate::access_map_storage::load_access_map(&username).await?;
+
+    println!("[ACCESS_MAP_QUERY] Loaded {} grants for {}", access_map.grants.len(), username);
+
+    // Serialize access map to JSON
+    let json = serde_json::to_vec(&access_map)?;
+
+    // Build response payload: [json_len:u32][json]
+    let mut payload = Vec::new();
+    payload.extend((json.len() as u32).to_le_bytes());
+    payload.extend(&json);
+
+    // Send response
+    send_tcp_response(stream, client_protocol::ACCESS_MAP_RESPONSE, &payload).await?;
+
+    println!("[ACCESS_MAP_QUERY] Sent {} grants to {}", access_map.grants.len(), username);
+    Ok(())
+}
+
+// REMOVED: Old server-mediated view request handlers (replaced by P2P architecture)
+// - handle_view_request_tcp: Server no longer forwards VIEW_REQUEST
+// - handle_deny_view_tcp: Clients handle denials directly via P2P
+// - handle_approve_view_tcp: Clients handle approvals directly via P2P
+// In the new architecture, clients communicate peer-to-peer using PEER_VIEW_REQUEST, etc.
 
 async fn handle_sync_usage_tcp(
     state: SharedState,
@@ -962,7 +860,6 @@ async fn notify_leader_add_client(
     username: &str,
     ip: String,
     port: u16,
-    cover_image: Option<String>,
     actual_images: Vec<String>,
 ) -> Result<()> {
     // Build EXEC_ADD_CLIENT message
@@ -978,15 +875,9 @@ async fn notify_leader_add_client(
 
     data.extend(port.to_le_bytes());
 
-    // Combine cover + actual images for wire format (cover first if exists)
-    let mut all_images = Vec::new();
-    if let Some(cover) = cover_image {
-        all_images.push(cover);
-    }
-    all_images.extend(actual_images);
-
-    data.extend((all_images.len() as u32).to_le_bytes());
-    for img in all_images {
+    // NEW P2P: Only actual_images (no cover)
+    data.extend((actual_images.len() as u32).to_le_bytes());
+    for img in actual_images {
         let img_bytes = img.as_bytes();
         data.extend((img_bytes.len() as u16).to_le_bytes());
         data.extend_from_slice(img_bytes);

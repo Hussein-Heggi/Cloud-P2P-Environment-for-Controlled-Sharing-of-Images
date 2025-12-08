@@ -16,6 +16,9 @@ mod viewer;
 mod extraction;
 mod owner;
 mod api_server;
+mod stego_client;
+mod p2p_server;
+mod local_access_map;
 
 use simple_client::{ClientState, SharedClientState, CLIENT_PORT};
 
