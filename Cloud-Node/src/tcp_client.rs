@@ -155,6 +155,41 @@ async fn handle_client_connection(
         s.dos_c_version += 1;
 
         println!("[CONNECTION] Removed connection for {} from registry", username);
+
+        // Check if we are the leader
+        let is_leader = {
+            let my_ip = cfg.service_bind_addr()
+                .expect("service_bind_addr not configured")
+                .ip();
+
+            if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+                exec_ip == &my_ip && std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() <= deadline
+            } else {
+                false
+            }
+        };
+        drop(s);
+
+        // If not leader, notify leader of status change
+        if !is_leader {
+            let mut data = Vec::new();
+            data.extend((username.len() as u16).to_le_bytes());
+            data.extend(username.as_bytes());
+            data.push(0u8); // online = false
+
+            if let Err(e) = crate::executor_leader::send_to_leader(
+                &cfg,
+                crate::executor_leader::EXEC_UPDATE_CLIENT_STATUS,
+                &data,
+            ).await {
+                eprintln!("[CONNECTION] Failed to notify leader: {}", e);
+            } else {
+                println!("[CONNECTION] ✅ Notified leader: {} is offline", username);
+            }
+        }
     }
 
     Ok(())
@@ -228,6 +263,11 @@ async fn route_client_message(
         x if x == client_protocol::ACCESS_MAP_QUERY => {
             info!(%peer_addr, len=payload.len(), "Received ACCESS_MAP_QUERY from client");
             handle_access_map_query(state, stream, peer_addr, payload).await
+        }
+
+        x if x == client_protocol::REQUEST_EXECUTOR => {
+            info!(%peer_addr, len=payload.len(), "Received REQUEST_EXECUTOR from client");
+            handle_request_executor(state, &cfg, stream, peer_addr).await
         }
 
         _ => {
@@ -453,6 +493,58 @@ async fn handle_join_tcp(
         warn!("Failed to notify leader about new client: {}", e);
     }
 
+    // Check if we are the executor/leader and deliver offline requests
+    let is_executor = {
+        let s = state.read().await;
+        let my_ip = cfg.service_bind_addr()
+            .expect("service_bind_addr not configured")
+            .ip();
+
+        if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+            exec_ip == &my_ip && std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() <= deadline
+        } else {
+            false
+        }
+    };
+
+    if is_executor {
+        let s = state.read().await;
+        if let Some(db) = &s.firestore_db {
+            match crate::firebase::get_and_delete_offline_requests(db, &username).await {
+                Ok(requests) if !requests.is_empty() => {
+                    println!("[JOIN] Delivering {} offline requests to {}", requests.len(), username);
+
+                    // Send each request to client
+                    for req in requests {
+                        // Format: PENDING_REQUEST message
+                        // [requester_len:u16][requester][image_name_len:u16][image_name][request_id:u32][requested_views:u32]
+                        let mut payload = Vec::new();
+                        payload.extend((req.requester.len() as u16).to_le_bytes());
+                        payload.extend(req.requester.as_bytes());
+                        payload.extend((req.image_name.len() as u16).to_le_bytes());
+                        payload.extend(req.image_name.as_bytes());
+                        payload.extend(req.request_id.to_le_bytes());
+                        payload.extend(req.requested_views.to_le_bytes());
+
+                        // Send to client
+                        if let Err(e) = send_tcp_response(stream.clone(), client_protocol::PENDING_REQUEST, &payload).await {
+                            warn!("Failed to send pending request to {}: {}", username, e);
+                        } else {
+                            println!("[JOIN] ✅ Sent pending request from {} to {}", req.requester, username);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to retrieve offline requests for {}: {}", username, e);
+                }
+                _ => {}
+            }
+        }
+    }
+
     println!("[HANDLE_JOIN_TCP] ✅ Client {} registered successfully", username);
     Ok(())
 }
@@ -578,6 +670,41 @@ async fn handle_dos_query_tcp(
     // Send DOS_UPDATE with DOS-C payload
     println!("[DOS_QUERY] Sending DOS_UPDATE with DOS-C ({} bytes) to {}", dos_payload.len(), peer_addr);
     send_tcp_response(stream.clone(), client_protocol::DOS_UPDATE, &dos_payload).await?;
+
+    Ok(())
+}
+
+/// Handle REQUEST_EXECUTOR: Client discovery protocol - respond if this server is executor
+async fn handle_request_executor(
+    state: SharedState,
+    cfg: &Config,
+    stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+) -> Result<()> {
+    // Check if this server is the current executor
+    let is_executor = {
+        let s = state.read().await;
+        let my_ip = cfg.service_bind_addr()
+            .expect("service_bind_addr not configured")
+            .ip();
+
+        if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+            exec_ip == &my_ip && std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() <= deadline
+        } else {
+            false
+        }
+    };
+
+    if is_executor {
+        println!("[REQUEST_EXECUTOR] ✅ I am executor, responding to {}", peer_addr);
+        // Send EXECUTOR_ACK
+        send_tcp_response(stream, client_protocol::EXECUTOR_ACK, &[]).await?;
+    } else {
+        println!("[REQUEST_EXECUTOR] ❌ I am not executor, ignoring request from {}", peer_addr);
+    }
 
     Ok(())
 }

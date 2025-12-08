@@ -73,6 +73,11 @@ pub const OFFLINE_REQUESTS_QUERY: u8 = 53;    // Client → Server on startup
 pub const OFFLINE_REQUESTS_RESPONSE: u8 = 54; // Server → Client
 pub const ACCESS_MAP_QUERY: u8 = 55;          // Client → Server on startup
 pub const ACCESS_MAP_RESPONSE: u8 = 56;       // Server → Client
+pub const PENDING_REQUEST: u8 = 57;           // Server → Client: Deliver offline request
+
+// Multi-Server Discovery Messages
+pub const REQUEST_EXECUTOR: u8 = 70;          // Client → Server: Find executor
+pub const EXECUTOR_ACK: u8 = 71;              // Server → Client: I am executor
 
 // ============================================================================
 // HELPER FUNCTIONS

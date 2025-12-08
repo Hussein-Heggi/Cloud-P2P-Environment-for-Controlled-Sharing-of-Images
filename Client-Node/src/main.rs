@@ -19,6 +19,7 @@ mod api_server;
 mod stego_client;
 mod p2p_server;
 mod local_access_map;
+mod config;
 
 use simple_client::{ClientState, SharedClientState, CLIENT_PORT};
 
@@ -70,6 +71,22 @@ async fn main() -> Result<()> {
             let images: Vec<String> = args.iter().skip(4).cloned().collect();
 
             run_interactive_mode(username, server_addr, images).await?;
+        }
+
+        "interactive-upload" => {
+            if args.len() < 7 {
+                println!("Usage: {} interactive-upload <username> <server_ip:port> <image_name> <true_path> <cover_path>", args[0]);
+                println!("  Runs interactive mode (JOIN + PING + DOS updates) AND uploads images for encryption");
+                return Ok(());
+            }
+
+            let username = args[2].clone();
+            let server_addr: SocketAddr = args[3].parse()?;
+            let image_name = args[4].clone();
+            let true_path = args[5].clone();
+            let cover_path = args[6].clone();
+
+            run_interactive_upload_mode(username, server_addr, image_name, true_path, cover_path).await?;
         }
 
         "help" | "-h" | "--help" => {
@@ -231,19 +248,50 @@ async fn run_interactive_mode(
 ) -> Result<()> {
     println!("=== CLIENT INTERACTIVE MODE (TCP + HTTP API) ===");
     println!("Username: {}", username);
-    println!("Server: {}", server_addr);
     println!("Client port: {}", CLIENT_PORT);
     println!("Images (raw): {:?}", images);
     println!();
 
+    // Try to load config.toml for multi-server discovery
+    let final_server_addr = match config::ClientConfig::load() {
+        Ok(cfg) => {
+            let server_addrs = cfg.server_addresses();
+            if server_addrs.len() > 1 {
+                println!("[DISCOVERY] Found {} servers in config.toml", server_addrs.len());
+                println!("[DISCOVERY] Using multi-server discovery protocol...");
+                match simple_client::discover_executor(&server_addrs).await {
+                    Ok(executor) => {
+                        println!("[DISCOVERY] ✅ Found executor at {}", executor);
+                        executor
+                    }
+                    Err(e) => {
+                        println!("[DISCOVERY] ⚠️  Discovery failed: {}", e);
+                        println!("[DISCOVERY] Falling back to provided address: {}", server_addr);
+                        server_addr
+                    }
+                }
+            } else {
+                println!("[DISCOVERY] Only one server in config.toml, using it directly");
+                server_addr
+            }
+        }
+        Err(_) => {
+            println!("[DISCOVERY] No config.toml found, using provided address: {}", server_addr);
+            server_addr
+        }
+    };
+
+    println!("Connecting to server: {}", final_server_addr);
+    println!();
+
     // Initialize state
-    let mut state = ClientState::new(username.clone(), server_addr);
+    let mut state = ClientState::new(username.clone(), final_server_addr);
     state.set_images(images);
     state.client_port = CLIENT_PORT;
     let state: SharedClientState = Arc::new(RwLock::new(state));
 
     // Connect to server via TCP
-    let (mut reader, writer) = simple_client::connect_to_server(server_addr).await?;
+    let (mut reader, writer) = simple_client::connect_to_server(final_server_addr).await?;
     println!();
 
     // Send JOIN
@@ -308,6 +356,120 @@ async fn run_interactive_mode(
     Ok(())
 }
 
+/// Interactive mode + Upload - JOIN + PING + DOS updates + Upload images for encryption
+async fn run_interactive_upload_mode(
+    username: String,
+    server_addr: SocketAddr,
+    image_name: String,
+    true_path: String,
+    cover_path: String,
+) -> Result<()> {
+    println!("=== CLIENT INTERACTIVE + UPLOAD MODE ===");
+    println!("Username: {}", username);
+    println!("Server: {}", server_addr);
+    println!("Client port: {}", CLIENT_PORT);
+    println!("Upload: {} (true={}, cover={})", image_name, true_path, cover_path);
+    println!();
+
+    // Initialize state
+    let mut state = ClientState::new(username.clone(), server_addr);
+    state.client_port = CLIENT_PORT;
+    let state: SharedClientState = Arc::new(RwLock::new(state));
+
+    // Connect to server via TCP
+    let (mut reader, writer) = simple_client::connect_to_server(server_addr).await?;
+    println!();
+
+    // Send JOIN
+    if let Err(e) = simple_client::join_server(state.clone(), writer.clone(), &mut reader).await {
+        println!("[CLIENT] ⚠️  JOIN failed: {}", e);
+        return Ok(());
+    }
+
+    println!("[CLIENT] ✅ Successfully joined server!");
+    println!();
+
+    // Start listener task (handles DOS updates AND encrypted image chunks)
+    let listener_task = {
+        let state_clone = state.clone();
+        let reader_clone = reader;
+        let writer_clone = writer.clone();
+        tokio::spawn(async move {
+            if let Err(e) = simple_client::run_listener(state_clone, reader_clone, writer_clone).await {
+                println!("[CLIENT-LISTENER] Error: {}", e);
+            }
+        })
+    };
+
+    // Start ping loop
+    let ping_task = {
+        let state_clone = state.clone();
+        let writer_clone = writer.clone();
+        tokio::spawn(async move {
+            if let Err(e) = simple_client::ping_loop(state_clone, writer_clone).await {
+                println!("[CLIENT-PING] Error: {}", e);
+            }
+        })
+    };
+
+    // Start upload task - send images to server for encryption (reuses existing connection)
+    let upload_task = {
+        let username_clone = username.clone();
+        let writer_clone = writer.clone();
+        let image_name_clone = image_name.clone();
+        let true_path_clone = true_path.clone();
+        let cover_path_clone = cover_path.clone();
+        tokio::spawn(async move {
+            // Wait a bit for JOIN to complete
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            println!("\n[UPLOAD-TASK] Starting upload...");
+            if let Err(e) = simple_client::upload_owner_image_with_writer(
+                &username_clone,
+                writer_clone,
+                &image_name_clone,
+                &true_path_clone,
+                &cover_path_clone,
+            ).await {
+                eprintln!("[UPLOAD-TASK] Upload failed: {}", e);
+            }
+        })
+    };
+
+    // Start HTTP API server for Web UI
+    let api_task = {
+        let state_clone = state.clone();
+        let writer_clone = writer.clone();
+        tokio::spawn(async move {
+            if let Err(e) = api_server::run_api_server(state_clone, writer_clone, 3001).await {
+                eprintln!("[API-SERVER] Error: {}", e);
+            }
+        })
+    };
+
+    println!("✅ Client is running in interactive + upload mode!");
+    println!("📊 DOS updates: ENABLED");
+    println!("📤 Upload task: STARTED");
+    println!("📥 Will receive encrypted image back from server");
+    println!("📱 HTTP API: http://localhost:3001");
+    println!("🌐 Web UI: http://localhost:3000 (run 'npm run dev' in Client-Node/web-ui/)");
+    println!();
+    println!("Press Ctrl+C to exit.");
+
+    // Wait for Ctrl+C
+    tokio::signal::ctrl_c().await?;
+
+    println!("\n[CLIENT] Shutting down...");
+
+    // Abort tasks
+    listener_task.abort();
+    ping_task.abort();
+    upload_task.abort();
+    api_task.abort();
+
+    Ok(())
+}
+
 fn print_usage() {
     println!("Simple Client - Test the new protocol (TCP)");
     println!();
@@ -315,6 +477,7 @@ fn print_usage() {
     println!("  cargo run -- join <username> <server_ip:port> [COVER] [actual1] [actual2] ...");
     println!("  cargo run -- listen <username> <server_ip:port>");
     println!("  cargo run -- interactive <username> <server_ip:port> [COVER] [actual1] [actual2] ...");
+    println!("  cargo run -- interactive-upload <username> <server_ip:port> <image_name> <true_path> <cover_path>");
     println!("  cargo run -- upload <username> <server_ip:port> <image_name> <true_path> <cover_path>");
     println!("  cargo run -- approve <username> <server_ip:port> <image_name> <req_id>");
     println!("  cargo run -- upload-and-fetch <username> <server_ip:port> <image_name> <true_path> <cover_path> [req_id]");
@@ -329,6 +492,10 @@ fn print_usage() {
     println!("  cargo run -- interactive alice 10.40.61.79:9080 cover.png sunset.jpg mountain.png");
     println!("  # → cover: cover.png, actual: [sunset.jpg, mountain.png]");
     println!("  # Then open http://localhost:3000 in browser (requires 'npm run dev' in web-ui/)");
+    println!();
+    println!("  # Interactive + Upload mode (JOIN + PING + DOS updates + Upload)");
+    println!("  cargo run -- interactive-upload bob 10.40.61.79:9000 secret secret.png cover.png");
+    println!("  # → Joins server, gets DOS updates, AND uploads images for encryption");
     println!();
     println!("  # Join server with 2 images (use TCP port 9000)");
     println!("  cargo run -- join alice 10.40.61.79:9000 sunset.jpg mountain.png");

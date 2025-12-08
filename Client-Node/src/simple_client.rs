@@ -642,6 +642,115 @@ pub async fn connect_to_server(server_addr: SocketAddr) -> Result<(tokio::net::t
     Ok((read_half, Arc::new(tokio::sync::Mutex::new(write_half))))
 }
 
+/// Owner upload using existing connection (for interactive-upload mode)
+/// Server encrypts true image into cover and sends back encrypted image
+pub async fn upload_owner_image_with_writer(
+    username: &str,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    image_name: &str,
+    true_path: &str,
+    cover_path: &str,
+) -> Result<()> {
+    println!(
+        "╔════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║ [OWNER UPLOAD] Starting upload for image: {}",
+        image_name
+    );
+    println!(
+        "╚════════════════════════════════════════════════════════════════╝"
+    );
+
+    println!("[OWNER UPLOAD] 📂 Reading files...");
+    let true_bytes = fs::read(true_path).await
+        .with_context(|| format!("Failed to read true image {}", true_path))?;
+    println!("[OWNER UPLOAD]   ✅ True image: {} ({} bytes)", true_path, true_bytes.len());
+
+    let cover_bytes = fs::read(cover_path).await
+        .with_context(|| format!("Failed to read cover image {}", cover_path))?;
+    println!("[OWNER UPLOAD]   ✅ Cover image: {} ({} bytes)", cover_path, cover_bytes.len());
+    println!("[OWNER UPLOAD]   ℹ️  Server will encrypt true image into cover (no metadata sent)");
+
+    // META message (with meta_size = 0, no metadata sent)
+    println!("[OWNER UPLOAD] 📤 Sending image sizes to server...");
+    let mut meta_payload = Vec::new();
+    meta_payload.extend((username.len() as u16).to_le_bytes());
+    meta_payload.extend(username.as_bytes());
+    meta_payload.extend((image_name.len() as u16).to_le_bytes());
+    meta_payload.extend(image_name.as_bytes());
+    meta_payload.extend((true_bytes.len() as u32).to_le_bytes());
+    meta_payload.extend((cover_bytes.len() as u32).to_le_bytes());
+    meta_payload.extend(0u32.to_le_bytes()); // meta_size = 0 (no metadata)
+    {
+        let mut w = writer.lock().await;
+        send_tcp_message_generic(&mut *w, OWNER_IMAGE_META, &meta_payload).await?;
+    }
+    println!("[OWNER UPLOAD] ✅ Image sizes sent");
+
+    // Chunk helper
+    async fn send_chunk(
+        writer: &Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        owner: &str,
+        image: &str,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<()> {
+        let chunk_size = 1000usize;
+        for (idx, chunk) in data.chunks(chunk_size).enumerate() {
+            let mut payload = Vec::new();
+            payload.extend((owner.len() as u16).to_le_bytes());
+            payload.extend(owner.as_bytes());
+            payload.extend((image.len() as u16).to_le_bytes());
+            payload.extend(image.as_bytes());
+            payload.push(kind);
+            let byte_offset = (idx * chunk_size) as u32;
+            payload.extend(byte_offset.to_le_bytes());
+            payload.extend((chunk.len() as u16).to_le_bytes());
+            payload.extend(chunk);
+            let mut w = writer.lock().await;
+            send_tcp_message_generic(&mut *w, OWNER_IMAGE_CHUNK, &payload).await?;
+        }
+        Ok(())
+    }
+
+    println!("[OWNER UPLOAD] 📤 Sending image chunks to server...");
+    println!("[OWNER UPLOAD]   📦 Sending true image chunks...");
+    send_chunk(&writer, username, image_name, 0, &true_bytes).await?;
+    println!("[OWNER UPLOAD]   ✅ True image chunks sent");
+
+    println!("[OWNER UPLOAD]   📦 Sending cover image chunks...");
+    send_chunk(&writer, username, image_name, 1, &cover_bytes).await?;
+    println!("[OWNER UPLOAD]   ✅ Cover image chunks sent");
+
+    println!(
+        "╔════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║ [OWNER UPLOAD] ✅ All data sent to server!"
+    );
+    println!(
+        "║ Image: {}",
+        image_name
+    );
+    println!(
+        "║ - True image: {} bytes",
+        true_bytes.len()
+    );
+    println!(
+        "║ - Cover image: {} bytes",
+        cover_bytes.len()
+    );
+    println!(
+        "║ Server will encrypt true image into cover and send back..."
+    );
+    println!(
+        "╚════════════════════════════════════════════════════════════════╝"
+    );
+
+    Ok(())
+}
+
 /// Owner upload: send true image and cover image to server (NO metadata)
 /// Server encrypts true image into cover and sends back encrypted image
 pub async fn upload_owner_image(
@@ -954,4 +1063,53 @@ pub async fn approve_and_receive(
     }
 
     Ok(())
+}
+
+/// Broadcast REQUEST_EXECUTOR to all servers, return executor address
+pub async fn discover_executor(
+    server_addresses: &[SocketAddr],
+) -> Result<SocketAddr> {
+    use tokio::net::TcpStream;
+
+    println!("[DISCOVERY] Broadcasting REQUEST_EXECUTOR to {} servers", server_addresses.len());
+
+    let timeout = Duration::from_secs(5);
+    let mut tasks = Vec::new();
+
+    for &addr in server_addresses {
+        let task = tokio::spawn(async move {
+            match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
+                Ok(Ok(mut stream)) => {
+                    // Send REQUEST_EXECUTOR
+                    let msg = vec![REQUEST_EXECUTOR];
+                    if stream.write_all(&(msg.len() as u32).to_le_bytes()).await.is_ok()
+                        && stream.write_all(&msg).await.is_ok()
+                    {
+                        // Read response
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).await.is_ok() {
+                            let len = u32::from_le_bytes(len_buf) as usize;
+                            let mut buf = vec![0u8; len];
+                            if stream.read_exact(&mut buf).await.is_ok() && buf[0] == EXECUTOR_ACK {
+                                println!("[DISCOVERY] ✅ Executor found at {}", addr);
+                                return Some(addr);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            None
+        });
+        tasks.push(task);
+    }
+
+    // Wait for first successful response
+    for task in tasks {
+        if let Ok(Some(executor_addr)) = task.await {
+            return Ok(executor_addr);
+        }
+    }
+
+    Err(anyhow::anyhow!("No executor found"))
 }

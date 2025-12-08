@@ -1,0 +1,11 @@
+# Server cluster addresses
+# Add all server addresses in your cluster below
+
+[[servers]]
+address = "10.40.61.79:9000"
+
+[[servers]]
+address = "10.40.61.80:9000"
+
+[[servers]]
+address = "10.40.61.81:9000"

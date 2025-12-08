@@ -11,7 +11,7 @@ pub const EXEC_ADD_CLIENT: u8 = 40;       // Executor → Leader: Add client to 
 pub const EXEC_ADD_ACCESS: u8 = 41;       // Executor → Leader: Grant access
 pub const EXEC_UPDATE_ACCESS: u8 = 42;    // Executor → Leader: Update consumed views
 pub const EXEC_REVOKE_ACCESS: u8 = 43;    // Executor → Leader: Revoke access
-pub const EXEC_DELETE_CLIENT: u8 = 44;    // Executor → Leader: Remove offline client
+pub const EXEC_UPDATE_CLIENT_STATUS: u8 = 44;  // Executor → Leader: Update client online status
 pub const LEADER_ACK: u8 = 45;            // Leader → Executor: Success
 pub const LEADER_ERROR: u8 = 46;          // Leader → Executor: Error
 
@@ -65,7 +65,7 @@ pub async fn run_executor_leader_channel(state: SharedState, cfg: Config) -> Res
                     EXEC_ADD_ACCESS => handle_add_access(state, &data).await,
                     EXEC_UPDATE_ACCESS => handle_update_access(state, &data).await,
                     EXEC_REVOKE_ACCESS => handle_revoke_access(state, &data).await,
-                    EXEC_DELETE_CLIENT => handle_delete_client(state, &data).await,
+                    EXEC_UPDATE_CLIENT_STATUS => handle_update_client_status(state, &data).await,
                     _ => {
                         debug!("Unknown executor-leader message type: {}", msg_type);
                         Ok(())
@@ -301,29 +301,34 @@ async fn handle_revoke_access(state: SharedState, data: &[u8]) -> Result<()> {
     }
 }
 
-/// Handle DELETE_CLIENT: Remove client from DOS-S (when offline)
-async fn handle_delete_client(state: SharedState, data: &[u8]) -> Result<()> {
-    // Parse: [username_len:u16][username]
+/// Handle UPDATE_CLIENT_STATUS: Update client online status in DOS-S
+async fn handle_update_client_status(state: SharedState, data: &[u8]) -> Result<()> {
+    // Parse: [username_len:u16][username][online:u8]
     let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
     let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
+    let online = data[2 + username_len] != 0;
 
-    debug!("Leader deleting client {} from Firebase", username);
+    debug!("Leader updating {} to online={}", username, online);
 
-    // Delete from Firebase (but keep access records)
+    // Update Firebase
     let s = state.read().await;
     if let Some(db) = &s.firestore_db {
-        firebase::delete_client(db, &username).await?;
+        if let Some(client) = s.dos_clients.get(&username) {
+            let mut updated = client.clone();
+            updated.online = online;
+            firebase::write_client(db, &updated).await?;
+        }
     }
     drop(s);
 
     // Update local state
     let mut s = state.write().await;
-    s.dos_clients.remove(&username);
+    if let Some(client) = s.dos_clients.get_mut(&username) {
+        client.online = online;
+    }
     s.dos_c_version += 1;
-    drop(s);
 
-    info!("Client {} removed from DOS-S", username);
-
+    info!("Client {} online={}", username, online);
     Ok(())
 }
 

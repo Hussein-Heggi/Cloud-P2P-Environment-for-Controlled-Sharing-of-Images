@@ -34,6 +34,24 @@ pub struct DosAccess {
     pub image_uuid: String,
 }
 
+/// Offline request - pending access request for offline owner
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfflineRequest {
+    pub requester: String,
+    pub owner: String,
+    pub image_name: String,
+    pub request_id: u32,
+    pub requested_views: u32,
+    pub timestamp: u64,
+}
+
+/// Document for offline_requests_map collection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfflineRequestsDoc {
+    pub owner: String,
+    pub requests: Vec<OfflineRequest>,
+}
+
 /// Initialize Firebase connection
 pub async fn init_firestore() -> Result<FirestoreDb> {
     info!("Initializing Firestore connection...");
@@ -244,6 +262,80 @@ pub async fn read_all_access(db: &FirestoreDb) -> Result<HashMap<String, DosAcce
     Ok(access_map)
 }
 
+/// Leader-only: Add offline request
+pub async fn add_offline_request(
+    db: &FirestoreDb,
+    owner: &str,
+    request: OfflineRequest
+) -> Result<()> {
+    let mut doc: OfflineRequestsDoc = match db
+        .fluent()
+        .select()
+        .by_id_in("offline_requests_map")
+        .obj()
+        .one(owner)
+        .await
+    {
+        Ok(Some(d)) => d,
+        _ => OfflineRequestsDoc {
+            owner: owner.to_string(),
+            requests: Vec::new(),
+        },
+    };
+
+    doc.requests.push(request);
+
+    // Try to update, if it fails (document doesn't exist), insert
+    let update_result = db.fluent()
+        .update()
+        .in_col("offline_requests_map")
+        .document_id(owner)
+        .object(&doc)
+        .execute::<()>()
+        .await;
+
+    if update_result.is_err() {
+        // Document doesn't exist, insert it
+        db.fluent()
+            .insert()
+            .into("offline_requests_map")
+            .document_id(owner)
+            .object(&doc)
+            .execute::<()>()
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Leader-only: Get and delete offline requests
+pub async fn get_and_delete_offline_requests(
+    db: &FirestoreDb,
+    owner: &str,
+) -> Result<Vec<OfflineRequest>> {
+    let doc: Option<OfflineRequestsDoc> = db
+        .fluent()
+        .select()
+        .by_id_in("offline_requests_map")
+        .obj()
+        .one(owner)
+        .await?;
+
+    if let Some(doc) = doc {
+        db.fluent()
+            .delete()
+            .from("offline_requests_map")
+            .document_id(owner)
+            .execute()
+            .await?;
+
+        info!("Retrieved {} offline requests for {}", doc.requests.len(), owner);
+        Ok(doc.requests)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 /// Real-time listener for DOS-S changes (all nodes)
 /// This function spawns a background task that listens for Firebase changes
 /// and updates the local SharedState accordingly
@@ -329,95 +421,3 @@ pub async fn cleanup_expired_access(db: &FirestoreDb, state: SharedState) -> Res
     Ok(())
 }
 
-/// Add offline request to Firebase (NEW P2P architecture)
-/// Stores request when recipient is not online
-pub async fn add_offline_request(
-    db: &FirestoreDb,
-    request: &crate::state::OfflineRequest,
-) -> Result<String> {
-    use rand::Rng;
-
-    // Generate unique document ID: {recipient}_{timestamp}_{random}
-    let random_suffix: u32 = rand::thread_rng().gen();
-    let doc_id = format!("{}_{}_{}",
-        request.recipient,
-        request.timestamp,
-        random_suffix
-    );
-
-    debug!("Adding offline request {} to Firebase", doc_id);
-
-    db.fluent()
-        .insert()
-        .into("offline_requests")
-        .document_id(&doc_id)
-        .object(request)
-        .execute::<()>()
-        .await
-        .context("Failed to insert offline request to Firebase")?;
-
-    debug!("Offline request {} added successfully", doc_id);
-    Ok(doc_id)
-}
-
-/// Get all offline requests for a specific recipient
-pub async fn get_offline_requests(
-    db: &FirestoreDb,
-    recipient: &str,
-) -> Result<Vec<crate::state::OfflineRequest>> {
-    debug!("Fetching offline requests for recipient: {}", recipient);
-
-    // Get all offline requests and filter in memory
-    // (Firestore 0.41 has simplified query API)
-    let all_requests: Vec<crate::state::OfflineRequest> = db
-        .fluent()
-        .select()
-        .from("offline_requests")
-        .obj()
-        .query()
-        .await
-        .context("Failed to query offline requests from Firebase")?;
-
-    // Filter by recipient
-    let requests: Vec<crate::state::OfflineRequest> = all_requests
-        .into_iter()
-        .filter(|r| r.recipient == recipient)
-        .collect();
-
-    debug!("Fetched {} offline requests for {}", requests.len(), recipient);
-    Ok(requests)
-}
-
-/// Delete all offline requests for a recipient (after delivery)
-pub async fn delete_offline_requests(
-    db: &FirestoreDb,
-    recipient: &str,
-) -> Result<()> {
-    debug!("Deleting offline requests for recipient: {}", recipient);
-
-    // Get all documents with their IDs
-    let docs: Vec<(String, crate::state::OfflineRequest)> = db
-        .fluent()
-        .select()
-        .from("offline_requests")
-        .obj()
-        .query()
-        .await
-        .context("Failed to query offline requests")?;
-
-    // Filter and delete documents for this recipient
-    for (doc_id, request) in docs {
-        if request.recipient == recipient {
-            db.fluent()
-                .delete()
-                .from("offline_requests")
-                .document_id(&doc_id)
-                .execute()
-                .await
-                .with_context(|| format!("Failed to delete offline request {}", doc_id))?;
-        }
-    }
-
-    debug!("Deleted offline requests for {}", recipient);
-    Ok(())
-}
