@@ -753,6 +753,14 @@ pub async fn upload_owner_image(
 
     if stay_open {
         println!("[OWNER-UPLOAD] Keeping connection open. Press Ctrl+C to exit.");
+        // Track incoming image chunks from the server (encrypted image being returned)
+        #[derive(Default)]
+        struct IncomingImage {
+            total_chunks: u32,
+            chunks: HashMap<u32, Vec<u8>>,
+        }
+        let mut images: HashMap<String, IncomingImage> = HashMap::new();
+
         loop {
             tokio::select! {
                 _ = signal::ctrl_c() => {
@@ -762,7 +770,84 @@ pub async fn upload_owner_image(
                 recv = recv_tcp_message_generic(&mut reader) => {
                     match recv {
                         Ok((msg_type, payload)) => {
-                            println!("[OWNER-UPLOAD-RECV] msg_type={} payload_len={}", msg_type, payload.len());
+                            if msg_type == IMAGE_CHUNK {
+                                // Parse: [name_len:u16][name][seq:u32][total:u32][chunk_len:u16][chunk]
+                                let mut offset = 0;
+                                if payload.len() < 2 {
+                                    println!("[OWNER-UPLOAD-RECV] IMAGE_CHUNK too short");
+                                    continue;
+                                }
+                                let name_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+                                offset += 2;
+                                if payload.len() < offset + name_len + 4 + 4 + 2 {
+                                    println!("[OWNER-UPLOAD-RECV] IMAGE_CHUNK invalid name length");
+                                    continue;
+                                }
+                                let name = String::from_utf8(payload[offset..offset + name_len].to_vec())?;
+                                offset += name_len;
+                                let seq = u32::from_le_bytes(payload[offset..offset + 4].try_into()?);
+                                offset += 4;
+                                let total = u32::from_le_bytes(payload[offset..offset + 4].try_into()?);
+                                offset += 4;
+                                let chunk_len = u16::from_le_bytes(payload[offset..offset + 2].try_into()?) as usize;
+                                offset += 2;
+                                if payload.len() < offset + chunk_len {
+                                    println!("[OWNER-UPLOAD-RECV] IMAGE_CHUNK data too short");
+                                    continue;
+                                }
+                                let chunk = payload[offset..offset + chunk_len].to_vec();
+
+                                let entry = images.entry(name.clone()).or_insert_with(|| IncomingImage {
+                                    total_chunks: total,
+                                    chunks: HashMap::new(),
+                                });
+                                entry.total_chunks = total;
+                                entry.chunks.insert(seq, chunk);
+
+                                println!(
+                                    "[OWNER-UPLOAD-RECV] Received chunk {}/{} for '{}'",
+                                    entry.chunks.len(),
+                                    entry.total_chunks,
+                                    name
+                                );
+
+                                if entry.chunks.len() as u32 == entry.total_chunks {
+                                    // Assemble in order
+                                    let mut assembled = Vec::new();
+                                    for i in 0..entry.total_chunks {
+                                        if let Some(c) = entry.chunks.get(&i) {
+                                            assembled.extend_from_slice(c);
+                                        } else {
+                                            println!("[OWNER-UPLOAD-RECV] ❌ Missing chunk {} for {}", i, name);
+                                            break;
+                                        }
+                                    }
+
+                                    // Save to encrypted_images directory
+                                    let dir = "encrypted_images";
+                                    if let Err(e) = tokio::fs::create_dir_all(dir).await {
+                                        println!("[OWNER-UPLOAD-RECV] Failed to create dir {}: {}", dir, e);
+                                    }
+
+                                    let path = format!("{}/{}_encrypted.png", dir, name);
+                                    match tokio::fs::write(&path, &assembled).await {
+                                        Ok(_) => {
+                                            println!(
+                                                "║ ✅ Encrypted image assembled ({} bytes) and saved to: {}",
+                                                assembled.len(),
+                                                path
+                                            );
+                                            println!("║ LOCATION: Client-Node/{}", path);
+                                        },
+                                        Err(e) => println!("[OWNER-UPLOAD-RECV] ❌ Failed to write image {}: {}", path, e),
+                                    }
+
+                                    // Clean up from images map
+                                    images.remove(&name);
+                                }
+                            } else {
+                                println!("[OWNER-UPLOAD-RECV] msg_type={} payload_len={}", msg_type, payload.len());
+                            }
                         }
                         Err(e) => {
                             println!("[OWNER-UPLOAD] Connection closed or error: {}", e);
