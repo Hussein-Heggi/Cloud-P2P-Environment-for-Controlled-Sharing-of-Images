@@ -1,9 +1,0 @@
-{
-  "owner": "owner",
-  "allow": [
-    {
-      "user": "3azeez",
-      "remaining_views": 3
-    }
-  ]
-}
