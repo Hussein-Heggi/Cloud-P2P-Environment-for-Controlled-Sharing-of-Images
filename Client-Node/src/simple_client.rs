@@ -424,7 +424,7 @@ async fn update_encrypted_image_index(
         size_bytes: usize,
     }
 
-    let index_path = "client_images/encrypted_image_index.json";
+    let index_path = "encrypted_storage/encrypted_image_index.json";
 
     // Load existing index or create new
     let mut index: HashMap<String, ImageIndexEntry> = if tokio::fs::metadata(index_path).await.is_ok() {
@@ -860,15 +860,33 @@ pub async fn run_listener(
                         }
                     }
 
-                    // Save to client_images directory (owner's own encrypted images)
-                    let dir = "client_images";
-                    if let Err(e) = tokio::fs::create_dir_all(dir).await {
-                        println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
-                    }
-
                     // Remove _encrypted suffix - use clean name
                     let clean_name = name.trim_end_matches("_encrypted");
-                    let path = format!("{}/{}.png", dir, clean_name);
+
+                    // Determine if this is viewer-received or owner's own image
+                    // Check if we have a pending request for this image (means we're a viewer)
+                    let is_viewer_image = {
+                        let s = state.read().await;
+                        s.my_requests.values().any(|req| req.image_name == clean_name)
+                    };
+
+                    let (dir, path) = if is_viewer_image {
+                        // Viewer receiving someone else's image → client_images
+                        let dir = "client_images";
+                        if let Err(e) = tokio::fs::create_dir_all(dir).await {
+                            println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
+                        }
+                        let path = format!("{}/{}.png", dir, clean_name);
+                        (dir, path)
+                    } else {
+                        // Owner receiving their own encrypted image → encrypted_storage
+                        let dir = "encrypted_storage";
+                        if let Err(e) = tokio::fs::create_dir_all(dir).await {
+                            println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
+                        }
+                        let path = format!("{}/{}.png", dir, clean_name);
+                        (dir, path)
+                    };
 
                     match tokio::fs::write(&path, &assembled).await {
                         Ok(_) => {
@@ -894,9 +912,39 @@ pub async fn run_listener(
                                 "╚════════════════════════════════════════════════════════════════╝"
                             );
 
-                            // Update encrypted image index
-                            if let Err(e) = update_encrypted_image_index(clean_name, &path, assembled.len()).await {
-                                println!("[CLIENT-LISTENER] ⚠️  Failed to update index: {}", e);
+                            // If viewer image, add to ViewerAccessMap
+                            if is_viewer_image {
+                                use crate::viewer::ViewerAccessMap;
+
+                                // Find the request to get owner and granted views
+                                let (owner, granted_views) = {
+                                    let s = state.read().await;
+                                    s.my_requests.values()
+                                        .find(|req| req.image_name == clean_name)
+                                        .map(|req| (req.owner.clone(), req.requested_views))
+                                        .unwrap_or(("unknown".to_string(), 5))
+                                };
+
+                                println!("[CLIENT-LISTENER] 📝 Adding to ViewerAccessMap: {} from {}", clean_name, owner);
+
+                                let map_path = ViewerAccessMap::default_path()
+                                    .unwrap_or_else(|_| std::path::PathBuf::from("viewer_access_map.json"));
+
+                                let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+                                    .unwrap_or_else(|_| ViewerAccessMap::new());
+
+                                viewer_map.add_grant(&owner, clean_name, granted_views, &path);
+
+                                if let Err(e) = viewer_map.save_to_file(&map_path).await {
+                                    println!("[CLIENT-LISTENER] ⚠️  Failed to save ViewerAccessMap: {}", e);
+                                } else {
+                                    println!("[CLIENT-LISTENER] ✅ Added to ViewerAccessMap with {} views", granted_views);
+                                }
+                            } else {
+                                // Update encrypted image index (for owner's own images)
+                                if let Err(e) = update_encrypted_image_index(clean_name, &path, assembled.len()).await {
+                                    println!("[CLIENT-LISTENER] ⚠️  Failed to update index: {}", e);
+                                }
                             }
                         },
                         Err(e) => println!("[CLIENT-LISTENER] ❌ Failed to write image {}: {}", path, e),

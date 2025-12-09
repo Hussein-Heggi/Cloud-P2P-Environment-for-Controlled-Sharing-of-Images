@@ -11,6 +11,10 @@ export default function Downloads() {
 
   useEffect(() => {
     fetchGrants();
+
+    // Auto-refresh every 2 seconds to show new images
+    const interval = setInterval(fetchGrants, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchGrants = async () => {

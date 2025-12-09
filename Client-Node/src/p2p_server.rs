@@ -225,10 +225,10 @@ async fn handle_peer_view_request(
         s.username.clone()
     };
 
-    // Check if we own this image by reading client_images directory (owner's own encrypted images)
-    println!("[P2P_SERVER] 🔍 Checking client_images directory for image '{}'", image_name);
+    // Check if we own this image by reading encrypted_storage directory (owner's own encrypted images)
+    println!("[P2P_SERVER] 🔍 Checking encrypted_storage directory for image '{}'", image_name);
 
-    let encrypted_storage = std::path::Path::new("client_images");
+    let encrypted_storage = std::path::Path::new("encrypted_storage");
     let has_image = if encrypted_storage.exists() {
         match tokio::fs::read_dir(encrypted_storage).await {
             Ok(mut entries) => {
@@ -248,17 +248,17 @@ async fn handle_peer_view_request(
                 found
             }
             Err(e) => {
-                println!("[P2P_SERVER] ⚠️  Failed to read client_images directory: {}", e);
+                println!("[P2P_SERVER] ⚠️  Failed to read encrypted_storage directory: {}", e);
                 false
             }
         }
     } else {
-        println!("[P2P_SERVER] ⚠️  client_images directory does not exist");
+        println!("[P2P_SERVER] ⚠️  encrypted_storage directory does not exist");
         false
     };
 
     if !has_image {
-        println!("[P2P_SERVER] ❌ Image '{}' not found in client_images directory", image_name);
+        println!("[P2P_SERVER] ❌ Image '{}' not found in encrypted_storage directory", image_name);
         // Send PEER_VIEW_REJECTED
         let mut payload = Vec::new();
         let reason = "Image not found";
