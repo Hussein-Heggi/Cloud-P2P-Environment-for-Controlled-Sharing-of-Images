@@ -158,6 +158,26 @@ async fn recv_tcp_message_generic<R: AsyncRead + Unpin>(
     Ok((msg_type, payload))
 }
 
+/// Send CLIENT_LEAVE message to server for graceful shutdown
+pub async fn send_client_leave(
+    username: &str,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+) -> Result<()> {
+    println!("[CLIENT] Sending CLIENT_LEAVE for graceful shutdown...");
+
+    // Build payload: [username_len:u16][username]
+    let mut payload = Vec::new();
+    payload.extend((username.len() as u16).to_le_bytes());
+    payload.extend(username.as_bytes());
+
+    // Send CLIENT_LEAVE message
+    let mut w = writer.lock().await;
+    send_tcp_message_generic(&mut *w, CLIENT_LEAVE, &payload).await?;
+
+    println!("[CLIENT] ✅ CLIENT_LEAVE sent to server");
+    Ok(())
+}
+
 /// Send JOIN message to server and wait for JOIN_ACK
 pub async fn join_server(
     state: SharedClientState,

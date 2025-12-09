@@ -332,7 +332,7 @@ async fn handle_update_client_status(state: SharedState, data: &[u8]) -> Result<
     Ok(())
 }
 
-/// Send a message to the leader (called by executor)
+/// Send a message to the leader (called by executor) with 5-retry exponential backoff
 pub async fn send_to_leader(
     cfg: &Config,
     msg_type: u8,
@@ -343,30 +343,88 @@ pub async fn send_to_leader(
         .next()
         .ok_or_else(|| anyhow::anyhow!("No leader address configured"))?;
 
-    let sock = UdpSocket::bind("0.0.0.0:0").await?;
-
     let mut msg = vec![msg_type];
     msg.extend_from_slice(data);
 
-    sock.send_to(&msg, leader_addr).await?;
+    // Retry configuration: 5 attempts with exponential backoff
+    // Delays: 1s, 2s, 4s, 8s, 16s (total max wait: 31 seconds)
+    let max_retries = 5;
+    let mut last_error = None;
 
-    // Wait for response with timeout
-    let mut buf = vec![0u8; 65536];
-    let timeout = tokio::time::Duration::from_secs(5);
+    for attempt in 1..=max_retries {
+        // Create a new socket for each attempt (clean state)
+        let sock = match UdpSocket::bind("0.0.0.0:0").await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to bind UDP socket (attempt {}): {}", attempt, e);
+                last_error = Some(anyhow::anyhow!("Socket bind failed: {}", e));
 
-    match tokio::time::timeout(timeout, sock.recv_from(&mut buf)).await {
-        Ok(Ok((n, _))) => {
-            if n > 0 && buf[0] == LEADER_ACK {
-                Ok(())
-            } else if n > 2 && buf[0] == LEADER_ERROR {
-                let err_len = u16::from_le_bytes(buf[1..3].try_into()?) as usize;
-                let err_msg = String::from_utf8_lossy(&buf[3..3 + err_len]);
-                Err(anyhow::anyhow!("Leader error: {}", err_msg))
-            } else {
-                Err(anyhow::anyhow!("Invalid response from leader"))
+                // Wait before retrying (exponential backoff: 2^(attempt-1) seconds)
+                if attempt < max_retries {
+                    let delay_secs = 2u64.pow(attempt - 1);
+                    debug!("Retrying in {} seconds...", delay_secs);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+                }
+                continue;
+            }
+        };
+
+        // Send message to leader
+        if let Err(e) = sock.send_to(&msg, leader_addr).await {
+            warn!("Failed to send to leader (attempt {}): {}", attempt, e);
+            last_error = Some(anyhow::anyhow!("Send failed: {}", e));
+
+            // Wait before retrying (exponential backoff)
+            if attempt < max_retries {
+                let delay_secs = 2u64.pow(attempt - 1);
+                debug!("Retrying in {} seconds...", delay_secs);
+                tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+            }
+            continue;
+        }
+
+        // Wait for response with timeout
+        let mut buf = vec![0u8; 65536];
+        let timeout = tokio::time::Duration::from_secs(5);
+
+        match tokio::time::timeout(timeout, sock.recv_from(&mut buf)).await {
+            Ok(Ok((n, _))) => {
+                if n > 0 && buf[0] == LEADER_ACK {
+                    // Success!
+                    if attempt > 1 {
+                        info!("Leader communication succeeded on attempt {}/{}", attempt, max_retries);
+                    }
+                    return Ok(());
+                } else if n > 2 && buf[0] == LEADER_ERROR {
+                    let err_len = u16::from_le_bytes(buf[1..3].try_into()?) as usize;
+                    let err_msg = String::from_utf8_lossy(&buf[3..3 + err_len]);
+                    // Leader explicitly returned error - don't retry
+                    return Err(anyhow::anyhow!("Leader error: {}", err_msg));
+                } else {
+                    warn!("Invalid response from leader (attempt {})", attempt);
+                    last_error = Some(anyhow::anyhow!("Invalid response from leader"));
+                }
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to receive from leader (attempt {}): {}", attempt, e);
+                last_error = Some(anyhow::anyhow!("Receive failed: {}", e));
+            }
+            Err(_) => {
+                warn!("Timeout waiting for leader response (attempt {})", attempt);
+                last_error = Some(anyhow::anyhow!("Timeout waiting for leader response"));
             }
         }
-        Ok(Err(e)) => Err(anyhow::anyhow!("Failed to receive from leader: {}", e)),
-        Err(_) => Err(anyhow::anyhow!("Timeout waiting for leader response")),
+
+        // Wait before retrying (exponential backoff: 2^(attempt-1) seconds)
+        if attempt < max_retries {
+            let delay_secs = 2u64.pow(attempt - 1);
+            debug!("Retrying in {} seconds... (attempt {}/{})", delay_secs, attempt, max_retries);
+            tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+        }
     }
+
+    // All retries exhausted
+    let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("All {} retries failed", max_retries));
+    warn!("Failed to communicate with leader after {} attempts: {}", max_retries, final_error);
+    Err(final_error)
 }

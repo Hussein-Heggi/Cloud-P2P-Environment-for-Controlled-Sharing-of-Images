@@ -109,6 +109,17 @@ async fn handle_peer_connection(
 
         // Route to appropriate handler
         match msg_type {
+            protocol::LIFE_CHECK => {
+                // Server is checking if we're alive - respond with ACK
+                println!("[P2P_SERVER] Received LIFE_CHECK from server, sending ACK");
+                let response = vec![protocol::LIFE_CHECK_ACK];
+                if let Err(e) = stream.write_all(&response).await {
+                    eprintln!("[P2P_SERVER] Failed to send LIFE_CHECK_ACK: {}", e);
+                } else {
+                    println!("[P2P_SERVER] ✅ Sent LIFE_CHECK_ACK to server");
+                }
+                // Continue listening for more messages
+            }
             protocol::PEER_VIEW_REQUEST => {
                 handle_peer_view_request(&mut stream, peer_addr, &payload, state.clone()).await?;
             }

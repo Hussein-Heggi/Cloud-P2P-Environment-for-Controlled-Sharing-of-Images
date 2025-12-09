@@ -99,6 +99,184 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // System recovery: Verify which clients are still alive after server restart
+    // Only runs on current executor (check executor_ip, NOT leader)
+    {
+        let st = state.clone();
+        let cfg_clone = cfg.clone();
+        tokio::spawn(async move {
+            // Wait 10 seconds for system to stabilize (executor assignment, etc.)
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            println!("[RECOVERY] Starting system recovery check...");
+
+            // Check if I'm the current executor
+            let (is_executor, db_opt) = {
+                let s = st.read().await;
+                let my_ip = match cfg_clone.service_bind_addr() {
+                    Some(addr) => addr.ip(),
+                    None => {
+                        eprintln!("[RECOVERY] No service bind address configured, skipping recovery");
+                        return;
+                    }
+                };
+
+                let is_exec = if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis();
+                    exec_ip == &my_ip && now <= deadline
+                } else {
+                    false
+                };
+
+                (is_exec, s.firestore_db.clone())
+            };
+
+            if !is_executor {
+                println!("[RECOVERY] Not current executor, skipping recovery");
+                return;
+            }
+
+            let db = match db_opt {
+                Some(d) => d,
+                None => {
+                    eprintln!("[RECOVERY] Firebase not connected, skipping recovery");
+                    return;
+                }
+            };
+
+            println!("[RECOVERY] I am executor, performing client liveness check...");
+
+            // Read all clients from Firebase (NO local cache)
+            let firebase_clients = match firebase::read_all_clients(&db).await {
+                Ok(clients) => clients,
+                Err(e) => {
+                    eprintln!("[RECOVERY] Failed to read clients from Firebase: {}", e);
+                    return;
+                }
+            };
+
+            println!("[RECOVERY] Found {} clients in Firebase", firebase_clients.len());
+
+            // For each client marked online, send LIFE_CHECK via TCP
+            for (username, client) in firebase_clients {
+                if !client.online {
+                    continue; // Skip offline clients
+                }
+
+                println!("[RECOVERY] Checking {} ({}:{})", username, client.client_ip, client.client_port);
+
+                // Send LIFE_CHECK via TCP to client's P2P port
+                let is_alive = match tcp_client::send_life_check(&client.client_ip, client.client_port, &username).await {
+                    Ok(alive) => alive,
+                    Err(e) => {
+                        eprintln!("[RECOVERY] Error checking {}: {}", username, e);
+                        false
+                    }
+                };
+
+                if !is_alive {
+                    println!("[RECOVERY] ❌ {} is not responding, marking offline", username);
+
+                    // Mark as offline in Firebase
+                    let mut updated_client = client.clone();
+                    updated_client.online = false;
+                    updated_client.last_seen = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+
+                    if let Err(e) = firebase::write_client(&db, &updated_client).await {
+                        eprintln!("[RECOVERY] Failed to update {} in Firebase: {}", username, e);
+                    }
+                } else {
+                    println!("[RECOVERY] ✅ {} is alive", username);
+                }
+            }
+
+            println!("[RECOVERY] System recovery completed");
+        });
+    }
+
+    // Stale client cleanup: Remove clients offline for > 2 minutes
+    // Only runs on leader (leader writes to Firebase)
+    {
+        let st = state.clone();
+        let cfg_clone = cfg.clone();
+        tokio::spawn(async move {
+            // Wait for system to stabilize
+            tokio::time::sleep(Duration::from_secs(15)).await;
+
+            loop {
+                // Run every 60 seconds
+                tokio::time::sleep(Duration::from_secs(60)).await;
+
+                // Check if I'm the leader (leader writes to Firebase, NOT executor)
+                let (is_leader, db_opt) = {
+                    let s = st.read().await;
+                    (s.is_leader, s.firestore_db.clone())
+                };
+
+                if !is_leader {
+                    continue; // Only leader cleans up stale clients
+                }
+
+                let db = match db_opt {
+                    Some(d) => d,
+                    None => {
+                        eprintln!("[CLEANUP] Firebase not connected, skipping cleanup");
+                        continue;
+                    }
+                };
+
+                println!("[CLEANUP] Starting stale client cleanup (leader task)...");
+
+                // Read all clients from Firebase
+                let firebase_clients = match firebase::read_all_clients(&db).await {
+                    Ok(clients) => clients,
+                    Err(e) => {
+                        eprintln!("[CLEANUP] Failed to read clients from Firebase: {}", e);
+                        continue;
+                    }
+                };
+
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+
+                let stale_threshold_ms = 2 * 60 * 1000; // 2 minutes in milliseconds
+
+                // Find stale clients (offline for > 2 minutes)
+                let mut stale_count = 0;
+                for (username, client) in firebase_clients {
+                    if !client.online {
+                        let offline_duration_ms = now_ms.saturating_sub(client.last_seen);
+                        if offline_duration_ms > stale_threshold_ms {
+                            println!("[CLEANUP] Removing stale client {} (offline for {}ms)", username, offline_duration_ms);
+
+                            // Delete from Firebase
+                            if let Err(e) = firebase::delete_client(&db, &username).await {
+                                eprintln!("[CLEANUP] Failed to delete {}: {}", username, e);
+                            } else {
+                                println!("[CLEANUP] ✅ Deleted stale client {}", username);
+                                stale_count += 1;
+                            }
+                        }
+                    }
+                }
+
+                if stale_count > 0 {
+                    println!("[CLEANUP] ✅ Removed {} stale clients", stale_count);
+                } else {
+                    println!("[CLEANUP] No stale clients to remove");
+                }
+            }
+        });
+    }
+
     // System monitor for CPU/RAM tracking
     let sys = Arc::new(tokio::sync::Mutex::new(System::new_all()));
 
@@ -217,9 +395,11 @@ async fn main() -> anyhow::Result<()> {
     // NEW PROTOCOL TASKS (Firebase + Executor-Leader + Client Management)
     // ============================================================================
 
-    // Firebase real-time listener (listens to DOS changes and updates local state)
+    // Firebase periodic read + broadcast (reads from Firebase every 5s and broadcasts to clients)
+    // CRITICAL: Servers do NOT cache DOS locally - Firebase is the ONLY persistent storage
     {
         let st = state.clone();
+        let cfg_clone = cfg.clone();
         tokio::spawn(async move {
             loop {
                 // Wait until Firebase is connected
@@ -229,11 +409,11 @@ async fn main() -> anyhow::Result<()> {
                 };
 
                 if let Some(db) = db {
-                    println!("[FIREBASE-LISTENER] Starting real-time listener...");
+                    println!("[FIREBASE-BROADCAST] Starting periodic read + broadcast (NO local caching)...");
 
                     // Run listener (will run forever unless error)
-                    if let Err(e) = firebase::listen_dos_changes(db, st.clone()).await {
-                        println!("[FIREBASE-LISTENER] ⚠️  Listener error: {} - restarting in 10s", e);
+                    if let Err(e) = firebase::listen_dos_changes(db, st.clone(), cfg_clone.clone()).await {
+                        println!("[FIREBASE-BROADCAST] ⚠️  Listener error: {} - restarting in 10s", e);
                         info!(error=%e, "Firebase listener error - will restart");
                     }
                 }

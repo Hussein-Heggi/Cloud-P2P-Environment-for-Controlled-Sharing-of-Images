@@ -240,6 +240,15 @@ async fn run_join_mode(
 
    println!("\n[CLIENT] Shutting down...");
 
+   // Send CLIENT_LEAVE for graceful shutdown
+   let username_for_leave = {
+       let s = state.read().await;
+       s.username.clone()
+   };
+
+   if let Err(e) = simple_client::send_client_leave(&username_for_leave, writer.clone()).await {
+       eprintln!("[CLIENT] Failed to send CLIENT_LEAVE: {}", e);
+   }
 
    // Abort tasks
    listener_task.abort();
@@ -402,6 +411,15 @@ async fn run_interactive_mode(
 
    println!("\n[CLIENT] Shutting down...");
 
+   // Send CLIENT_LEAVE for graceful shutdown
+   let username_for_leave = {
+       let s = state.read().await;
+       s.username.clone()
+   };
+
+   if let Err(e) = simple_client::send_client_leave(&username_for_leave, writer.clone()).await {
+       eprintln!("[CLIENT] Failed to send CLIENT_LEAVE: {}", e);
+   }
 
    // Abort tasks
    listener_task.abort();
@@ -566,6 +584,15 @@ async fn run_interactive_upload_mode(
 
    println!("\n[CLIENT] Shutting down...");
 
+   // Send CLIENT_LEAVE for graceful shutdown
+   let username_for_leave = {
+       let s = state.read().await;
+       s.username.clone()
+   };
+
+   if let Err(e) = simple_client::send_client_leave(&username_for_leave, writer.clone()).await {
+       eprintln!("[CLIENT] Failed to send CLIENT_LEAVE: {}", e);
+   }
 
    // Abort tasks
    listener_task.abort();

@@ -79,6 +79,11 @@ pub const PENDING_REQUEST: u8 = 57;           // Server → Client: Deliver offl
 pub const REQUEST_EXECUTOR: u8 = 70;          // Client → Server: Find executor
 pub const EXECUTOR_ACK: u8 = 71;              // Server → Client: I am executor
 
+// System Recovery and Failover (TCP-based)
+pub const LIFE_CHECK: u8 = 72;                // Server → Client P2P TCP: "Are you alive?"
+pub const LIFE_CHECK_ACK: u8 = 73;            // Client → Server TCP: "Yes, I'm alive"
+pub const CLIENT_LEAVE: u8 = 74;              // Client → Server TCP: Graceful shutdown
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================

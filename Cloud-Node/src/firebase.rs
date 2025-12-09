@@ -338,18 +338,20 @@ pub async fn get_and_delete_offline_requests(
 
 /// Real-time listener for DOS-S changes (all nodes)
 /// This function spawns a background task that listens for Firebase changes
-/// and updates the local SharedState accordingly
+/// and broadcasts directly to clients (NO local caching)
 pub async fn listen_dos_changes(
     db: FirestoreDb,
     state: SharedState,
+    cfg: crate::config::Config,
 ) -> Result<()> {
-    info!("Starting Firebase real-time listener...");
+    info!("Starting Firebase periodic read + broadcast (NO local caching)...");
 
     // Spawn listener for dos_s_clients collection
     let db_clone = db.clone();
     let state_clone = state.clone();
+    let cfg_clone = cfg.clone();
     tokio::spawn(async move {
-        if let Err(e) = listen_clients_collection(db_clone, state_clone).await {
+        if let Err(e) = listen_clients_collection(db_clone, state_clone, cfg_clone).await {
             error!("Clients listener error: {}", e);
         }
     });
@@ -367,12 +369,49 @@ pub async fn listen_dos_changes(
     Ok(())
 }
 
-async fn listen_clients_collection(_db: FirestoreDb, _state: SharedState) -> Result<()> {
-    // TODO: Implement with correct firestore-rs API
-    // The firestore-rs 0.41 API for listeners needs to be researched
-    // For now, periodic polling will handle sync
+async fn listen_clients_collection(
+    db: FirestoreDb,
+    state: SharedState,
+    cfg: crate::config::Config,
+) -> Result<()> {
+    use std::time::Duration;
+
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Only read/broadcast if I'm the current EXECUTOR (NOT leader - different roles!)
+        let is_executor = {
+            let s = state.read().await;
+            let my_ip = cfg.service_bind_addr()
+                .expect("service_bind_addr not configured")
+                .ip();
+
+            if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                exec_ip == &my_ip && now <= deadline
+            } else {
+                false
+            }
+        };
+
+        if !is_executor {
+            continue; // Skip if not current executor
+        }
+
+        // Read all clients from Firebase (NO local caching)
+        match read_all_clients(&db).await {
+            Ok(firebase_dos) => {
+                // DO NOT cache locally - broadcast directly to clients via TCP
+                println!("[FIREBASE-READ] Read {} clients, broadcasting to connected clients...", firebase_dos.len());
+                crate::tcp_client::broadcast_dos_to_clients(&state, firebase_dos).await;
+            }
+            Err(e) => {
+                error!("[FIREBASE-READ] Failed to read clients from Firebase: {}", e);
+            }
+        }
     }
 }
 

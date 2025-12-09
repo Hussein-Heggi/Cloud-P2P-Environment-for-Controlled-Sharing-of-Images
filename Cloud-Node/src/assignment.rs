@@ -93,7 +93,7 @@ pub async fn run_assignment_channels(
     Ok(())
 }
 
-async fn recv_assign_loop(state: SharedState, sock: Arc<UdpSocket>, _cfg: Config) {
+async fn recv_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Config) {
     let mut buf = [0u8; 256];
     let mut last_log = Instant::now() - Duration::from_secs(12);
 
@@ -120,10 +120,58 @@ async fn recv_assign_loop(state: SharedState, sock: Arc<UdpSocket>, _cfg: Config
                         let ip = IpAddr::V4(Ipv4Addr::from(ipv4_be));
                         let deadline_ms = now_ms() + lease_ms as u128;
 
+                        // CRITICAL: Detect executor failover (check executor_ip, NOT leader!)
+                        // If I WAS the current executor but NOT anymore, close all client connections
+                        let (was_executor, is_new_executor) = {
+                            let s = state.read().await;
+                            let my_ip = cfg.service_bind_addr().map(|a| a.ip());
+
+                            let was_exec = if let (Some(my_ip), Some(old_exec_ip)) = (my_ip, &s.executor_ip) {
+                                my_ip == *old_exec_ip
+                            } else {
+                                false
+                            };
+
+                            let is_new_exec = if let Some(my_ip) = my_ip {
+                                my_ip == ip
+                            } else {
+                                false
+                            };
+
+                            (was_exec, is_new_exec)
+                        };
+
+                        // Update executor info
                         {
                             let mut s = state.write().await;
                             s.executor_ip = Some(ip);
                             s.executor_lease_deadline_ms = Some(deadline_ms);
+                        }
+
+                        // If I was the current system executor but NOT anymore, close all client connections
+                        // Clients will use REQUEST_EXECUTOR broadcast to find new executor
+                        if was_executor && !is_new_executor {
+                            println!("[EXECUTOR-FAILOVER] No longer the current system executor - closing all client connections");
+                            info!("Executor failover detected - closing client connections");
+
+                            // Close all client TCP connections
+                            let connections_to_close = {
+                                let mut s = state.write().await;
+                                let connections = s.client_connections.clone();
+                                s.client_connections.clear(); // Clear the map
+                                connections
+                            };
+
+                            println!("[EXECUTOR-FAILOVER] Closing {} client connections", connections_to_close.len());
+
+                            for (username, stream_mutex) in connections_to_close {
+                                use tokio::io::AsyncWriteExt;
+                                let mut stream = stream_mutex.lock().await;
+                                let _ = stream.shutdown().await; // Gracefully close TCP connection
+                                println!("[EXECUTOR-FAILOVER] Closed connection to {}", username);
+                            }
+
+                            println!("[EXECUTOR-FAILOVER] All client connections closed. Clients will rediscover new executor via REQUEST_EXECUTOR");
                         }
 
                         // Log at most once every ~12 seconds

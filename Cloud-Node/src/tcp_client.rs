@@ -270,6 +270,11 @@ async fn route_client_message(
             handle_request_executor(state, &cfg, stream, peer_addr).await
         }
 
+        x if x == client_protocol::CLIENT_LEAVE => {
+            info!(%peer_addr, len=payload.len(), "Received CLIENT_LEAVE from client");
+            handle_client_leave(state, &cfg, stream, peer_addr, payload).await
+        }
+
         _ => {
             warn!(%peer_addr, msg_type, "Unknown message type from client");
             Ok(())
@@ -709,6 +714,62 @@ async fn handle_request_executor(
     Ok(())
 }
 
+/// Handle CLIENT_LEAVE: Client sends graceful shutdown notification
+async fn handle_client_leave(
+    state: SharedState,
+    cfg: &Config,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    data: &[u8],
+) -> Result<()> {
+    // Parse username: [username_len:u16][username]
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("CLIENT_LEAVE too short"));
+    }
+
+    let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
+    if data.len() < 2 + username_len {
+        return Err(anyhow::anyhow!("CLIENT_LEAVE invalid username length"));
+    }
+
+    let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
+
+    println!("[LEAVE] Client {} ({}) is leaving gracefully", username, peer_addr);
+
+    // Remove from local state
+    {
+        let mut s = state.write().await;
+        s.client_connections.remove(&username);
+
+        // Mark as offline in dos_clients
+        if let Some(client) = s.dos_clients.get_mut(&username) {
+            client.online = false;
+        }
+
+        // Increment DOS version to signal change
+        s.dos_c_version += 1;
+    }
+
+    // Notify leader to mark offline in Firebase
+    let mut data = Vec::new();
+    data.extend((username.len() as u16).to_le_bytes());
+    data.extend(username.as_bytes());
+    data.push(0u8); // online = false
+
+    if let Err(e) = crate::executor_leader::send_to_leader(
+        cfg,
+        crate::executor_leader::EXEC_UPDATE_CLIENT_STATUS,
+        &data,
+    ).await {
+        eprintln!("[LEAVE] Failed to notify leader: {}", e);
+    } else {
+        println!("[LEAVE] ✅ Notified leader: {} is offline", username);
+    }
+
+    println!("[LEAVE] ✅ Client {} removed from registry", username);
+    Ok(())
+}
+
 /// Handle OFFLINE_REQUESTS_QUERY: Client requests pending offline requests on startup
 async fn handle_offline_requests_query(
     state: SharedState,
@@ -1100,4 +1161,156 @@ async fn notify_leader_add_client(
     }
 
     crate::executor_leader::send_to_leader(cfg, crate::executor_leader::EXEC_ADD_CLIENT, &data).await
+}
+
+/// Broadcast DOS from Firebase to all connected clients (NO local caching)
+/// This function reads from Firebase data and broadcasts directly to clients
+/// Servers do NOT cache DOS - Firebase is the ONLY persistent storage
+pub async fn broadcast_dos_to_clients(
+    state: &SharedState,
+    firebase_dos: std::collections::HashMap<String, crate::firebase::DosClient>,
+) {
+    use std::collections::HashMap;
+    use tokio::io::AsyncWriteExt;
+    use tokio::sync::Mutex;
+
+    // Get all active client connections
+    let connections: HashMap<String, Arc<Mutex<TcpStream>>> = {
+        let s = state.read().await;
+        s.client_connections.clone()
+    };
+
+    println!("[DOS-BROADCAST] Broadcasting to {} connected clients (from Firebase, NO local caching)", connections.len());
+
+    for (username, stream_mutex) in connections {
+        // Build DOS payload excluding this client (self-exclusion)
+        let dos_payload = build_dos_payload_from_firebase(&firebase_dos, &username);
+
+        // Send DOS_UPDATE via TCP
+        let msg_type = client_protocol::DOS_UPDATE;
+        let mut message = Vec::with_capacity(1 + dos_payload.len());
+        message.push(msg_type);
+        message.extend_from_slice(&dos_payload);
+
+        // Lock the stream and write the message
+        let mut stream = stream_mutex.lock().await;
+        match stream.write_all(&message).await {
+            Ok(_) => {
+                println!("[DOS-BROADCAST] ✅ Sent {} bytes to {}", message.len(), username);
+            }
+            Err(e) => {
+                eprintln!("[DOS-BROADCAST] ❌ Failed to send to {}: {}", username, e);
+            }
+        }
+    }
+}
+
+/// Build DOS payload from Firebase data (NOT from local cache)
+/// Excludes the requesting client (self-exclusion)
+fn build_dos_payload_from_firebase(
+    firebase_dos: &std::collections::HashMap<String, crate::firebase::DosClient>,
+    exclude_username: &str,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+
+    // DOS version (use max last_seen as version proxy since servers don't cache version)
+    let version = firebase_dos.values()
+        .map(|c| c.last_seen)
+        .max()
+        .unwrap_or(0);
+    payload.extend(version.to_le_bytes());
+
+    // Filter clients (exclude the requesting client)
+    let clients_to_send: Vec<_> = firebase_dos
+        .iter()
+        .filter(|(name, _)| *name != exclude_username)
+        .collect();
+
+    // Number of clients (u32)
+    payload.extend((clients_to_send.len() as u32).to_le_bytes());
+
+    // For each client: name, IP, port, images
+    for (client_name, client) in clients_to_send {
+        // Client name
+        payload.extend((client_name.len() as u16).to_le_bytes());
+        payload.extend_from_slice(client_name.as_bytes());
+
+        // Client IP
+        payload.extend((client.client_ip.len() as u16).to_le_bytes());
+        payload.extend_from_slice(client.client_ip.as_bytes());
+
+        // Client port
+        payload.extend(client.client_port.to_le_bytes());
+
+        // Actual images (no cover images in unified DOS)
+        payload.extend((client.actual_images.len() as u32).to_le_bytes());
+        for img in &client.actual_images {
+            payload.extend((img.len() as u16).to_le_bytes());
+            payload.extend_from_slice(img.as_bytes());
+        }
+    }
+
+    payload
+}
+
+/// Send LIFE_CHECK to client's P2P TCP port and wait for ACK
+/// This is used for system recovery to verify which clients are still alive
+/// CRITICAL: Uses TCP (NOT UDP) - creates TCP connection to client's P2P port
+pub async fn send_life_check(client_ip: &str, client_port: u16, username: &str) -> Result<bool> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::{timeout, Duration};
+
+    let client_addr = format!("{}:{}", client_ip, client_port);
+    let socket_addr: SocketAddr = client_addr.parse()
+        .context(format!("Invalid client address: {}", client_addr))?;
+
+    // Create TCP connection to client's P2P port (1 second timeout)
+    let mut tcp_stream = match timeout(
+        Duration::from_secs(1),
+        TcpStream::connect(socket_addr)
+    ).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            eprintln!("[LIFE_CHECK] Failed to connect to {}: {}", client_addr, e);
+            return Ok(false);
+        }
+        Err(_) => {
+            eprintln!("[LIFE_CHECK] Timeout connecting to {}", client_addr);
+            return Ok(false);
+        }
+    };
+
+    // Build LIFE_CHECK message: [msg_type:u8][username_len:u16][username]
+    let mut payload = Vec::new();
+    payload.push(client_protocol::LIFE_CHECK);
+    payload.extend((username.len() as u16).to_le_bytes());
+    payload.extend(username.as_bytes());
+
+    // Send LIFE_CHECK via TCP
+    if let Err(e) = tcp_stream.write_all(&payload).await {
+        eprintln!("[LIFE_CHECK] Failed to send to {}: {}", client_addr, e);
+        return Ok(false);
+    }
+
+    // Wait for ACK (1 second timeout)
+    let mut buf = [0u8; 1];
+    match timeout(Duration::from_secs(1), tcp_stream.read_exact(&mut buf)).await {
+        Ok(Ok(_)) if buf[0] == client_protocol::LIFE_CHECK_ACK => {
+            println!("[LIFE_CHECK] ✅ Received ACK from {} ({})", username, client_addr);
+            Ok(true)
+        }
+        Ok(Ok(_)) => {
+            eprintln!("[LIFE_CHECK] Wrong response from {}: {}", client_addr, buf[0]);
+            Ok(false)
+        }
+        Ok(Err(e)) => {
+            eprintln!("[LIFE_CHECK] Read error from {}: {}", client_addr, e);
+            Ok(false)
+        }
+        Err(_) => {
+            eprintln!("[LIFE_CHECK] Timeout waiting for ACK from {}", client_addr);
+            Ok(false)
+        }
+    }
+    // TCP connection automatically closed when tcp_stream goes out of scope
 }
