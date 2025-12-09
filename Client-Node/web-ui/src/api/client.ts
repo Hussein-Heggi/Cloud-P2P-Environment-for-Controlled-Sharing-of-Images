@@ -73,6 +73,19 @@ export interface ApproveResponse {
   message: string;
 }
 
+export interface AccessGrant {
+  owner: string;
+  image_name: string;
+  remaining_views: number;
+  received_at: number;
+  encrypted_path: string;
+}
+
+export interface ViewerAccessMapResponse {
+  grants: AccessGrant[];
+  total_available: number;
+}
+
 // API Methods
 export const getStatus = async (): Promise<StatusResponse> => {
   const response = await api.get<StatusResponse>('/api/status');
@@ -117,6 +130,25 @@ export const getDownloads = async (): Promise<DownloadInfo[]> => {
 export const extractImage = async (filename: string): Promise<ExtractionResponse> => {
   const response = await api.post<ExtractionResponse>(`/api/extract/${filename}`);
   return response.data;
+};
+
+export const getViewerAccessMap = async (): Promise<ViewerAccessMapResponse> => {
+  const response = await api.get<ViewerAccessMapResponse>('/api/viewer-access-map');
+  return response.data;
+};
+
+export const viewImage = async (owner: string, imageName: string): Promise<{ blob: Blob; remainingViews: number }> => {
+  const response = await api.get(`/api/view/${owner}/${imageName}`, {
+    responseType: 'blob',
+  });
+
+  // Extract remaining views from response header
+  const remainingViews = parseInt(response.headers['x-remaining-views'] || '0', 10);
+
+  return {
+    blob: response.data,
+    remainingViews,
+  };
 };
 
 export default api;

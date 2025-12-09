@@ -118,8 +118,8 @@ pub async fn approve_peer_view_request(
         s.username.clone()
     };
 
-    // Read pre-encrypted image from encrypted_storage/
-    let encrypted_path = format!("encrypted_storage/{}.png", image_name.trim_end_matches(".png"));
+    // Read pre-encrypted image from client_images/ (owner's own encrypted images)
+    let encrypted_path = format!("client_images/{}.png", image_name.trim_end_matches(".png"));
     println!("[P2P-OWNER] Reading pre-encrypted image from: {}", encrypted_path);
 
     let encrypted_image = tokio::fs::read(&encrypted_path).await

@@ -1,45 +1,66 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import StatusBar from '../components/StatusBar';
-import { getDownloads, extractImage, DownloadInfo } from '../api/client';
+import { getViewerAccessMap, viewImage, AccessGrant } from '../api/client';
 
 export default function Downloads() {
-  const [downloads, setDownloads] = useState<DownloadInfo[]>([]);
+  const [grants, setGrants] = useState<AccessGrant[]>([]);
   const [loading, setLoading] = useState(true);
-  const [extracting, setExtracting] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<{ owner: string; image: string } | null>(null);
+  const [currentImage, setCurrentImage] = useState<{ url: string; owner: string; image: string; remainingViews: number } | null>(null);
 
   useEffect(() => {
-    fetchDownloads();
+    fetchGrants();
   }, []);
 
-  const fetchDownloads = async () => {
+  const fetchGrants = async () => {
     try {
-      const data = await getDownloads();
-      setDownloads(data);
+      const data = await getViewerAccessMap();
+      setGrants(data.grants);
       setLoading(false);
     } catch (error) {
-      console.error('Failed to fetch downloads:', error);
+      console.error('Failed to fetch viewer access map:', error);
       setLoading(false);
     }
   };
 
-  const handleExtract = async (filename: string) => {
-    setExtracting(filename);
+  const handleViewImage = async (owner: string, imageName: string) => {
+    setViewing({ owner, image: imageName });
     try {
-      const result = await extractImage(filename);
-      alert(`Extraction successful!\nTrue image: ${result.true_image_path}`);
-      // Refresh downloads list
-      await fetchDownloads();
+      const { blob, remainingViews } = await viewImage(owner, imageName);
+
+      // Create object URL from blob
+      const imageUrl = URL.createObjectURL(blob);
+
+      setCurrentImage({
+        url: imageUrl,
+        owner,
+        image: imageName,
+        remainingViews,
+      });
+
+      // Update the grant in the list
+      setGrants(prevGrants =>
+        prevGrants.map(g =>
+          g.owner === owner && g.image_name === imageName
+            ? { ...g, remaining_views: remainingViews }
+            : g
+        ).filter(g => g.remaining_views > 0) // Remove grants with 0 views
+      );
     } catch (error) {
-      console.error('Failed to extract:', error);
-      alert('Extraction failed');
+      console.error('Failed to view image:', error);
+      alert('Failed to view image. You may have no remaining views.');
+      await fetchGrants(); // Refresh the list
     } finally {
-      setExtracting(null);
+      setViewing(null);
     }
   };
 
-  const getFilename = (path: string) => {
-    return path.split('/').pop() || path;
+  const closeImageViewer = () => {
+    if (currentImage) {
+      URL.revokeObjectURL(currentImage.url);
+    }
+    setCurrentImage(null);
   };
 
   return (
@@ -48,7 +69,7 @@ export default function Downloads() {
 
       <div className="container mx-auto px-4 py-6">
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-gray-800">Downloads</h1>
+          <h1 className="text-3xl font-bold text-gray-800">My Images</h1>
           <Link to="/dashboard" className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md">
             Back to Dashboard
           </Link>
@@ -56,92 +77,103 @@ export default function Downloads() {
 
         {loading ? (
           <div className="text-center py-12">
-            <div className="text-gray-500">Loading downloads...</div>
+            <div className="text-gray-500">Loading your images...</div>
           </div>
-        ) : downloads.length === 0 ? (
+        ) : grants.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
-            <div className="text-gray-500 text-lg mb-4">No downloads yet</div>
-            <p className="text-gray-400 mb-6">Request images from the Dashboard to see them here</p>
+            <div className="text-gray-500 text-lg mb-4">No images available</div>
+            <p className="text-gray-400 mb-6">Request images from the Dashboard to view them here</p>
             <Link to="/dashboard" className="text-blue-500 hover:text-blue-600">
               Go to Dashboard
             </Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {downloads.map((download, index) => (
+            {grants.map((grant, index) => (
               <div key={index} className="bg-white rounded-lg shadow overflow-hidden">
                 <div className="p-4">
-                  <h3 className="font-semibold text-lg mb-2">{download.image_name}</h3>
+                  <h3 className="font-semibold text-lg mb-2">{grant.image_name}</h3>
                   <p className="text-sm text-gray-600 mb-1">
-                    <strong>Owner:</strong> {download.owner}
+                    <strong>Owner:</strong> {grant.owner}
+                  </p>
+                  <p className="text-sm text-gray-600 mb-1">
+                    <strong>Remaining Views:</strong>{' '}
+                    <span className={`font-bold ${
+                      grant.remaining_views <= 3 ? 'text-red-600' : 'text-green-600'
+                    }`}>
+                      {grant.remaining_views}
+                    </span>
                   </p>
                   <p className="text-xs text-gray-500 mb-4">
-                    Embedded: {getFilename(download.embedded_path)}
+                    Received: {new Date(grant.received_at * 1000).toLocaleString()}
                   </p>
 
-                  {/* Embedded Image Preview */}
-                  <div className="mb-4">
-                    <p className="text-xs font-medium text-gray-700 mb-2">Embedded Image (Cover):</p>
-                    <div className="border border-gray-200 rounded overflow-hidden">
-                      <img
-                        src={`http://localhost:3001/${download.embedded_path}`}
-                        alt="Embedded"
-                        className="w-full h-48 object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%23999"%3ENo Image%3C/text%3E%3C/svg%3E';
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Extract Button or True Image */}
-                  {!download.extracted_path ? (
-                    <button
-                      onClick={() => handleExtract(getFilename(download.embedded_path))}
-                      disabled={extracting === getFilename(download.embedded_path)}
-                      className={`w-full py-2 px-4 rounded-md font-medium ${
-                        extracting === getFilename(download.embedded_path)
-                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                          : 'bg-green-500 hover:bg-green-600 text-white'
-                      }`}
-                    >
-                      {extracting === getFilename(download.embedded_path) ? 'Extracting...' : 'Extract True Image'}
-                    </button>
-                  ) : (
-                    <div>
-                      <p className="text-xs font-medium text-green-700 mb-2">
-                        ✓ Extracted: {getFilename(download.extracted_path)}
-                      </p>
-                      <div className="border border-green-200 rounded overflow-hidden">
-                        <img
-                          src={`http://localhost:3001/${download.extracted_path}`}
-                          alt="True Image"
-                          className="w-full h-48 object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%23999"%3ENo Image%3C/text%3E%3C/svg%3E';
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Metadata */}
-                  {download.metadata && (
-                    <details className="mt-4">
-                      <summary className="cursor-pointer text-xs text-blue-600 hover:text-blue-800">
-                        View Metadata
-                      </summary>
-                      <pre className="mt-2 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
-                        {download.metadata}
-                      </pre>
-                    </details>
-                  )}
+                  {/* View Button */}
+                  <button
+                    onClick={() => handleViewImage(grant.owner, grant.image_name)}
+                    disabled={viewing?.owner === grant.owner && viewing?.image === grant.image_name}
+                    className={`w-full py-2 px-4 rounded-md font-medium ${
+                      viewing?.owner === grant.owner && viewing?.image === grant.image_name
+                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                        : grant.remaining_views <= 0
+                        ? 'bg-red-500 text-white cursor-not-allowed'
+                        : 'bg-blue-500 hover:bg-blue-600 text-white'
+                    }`}
+                  >
+                    {viewing?.owner === grant.owner && viewing?.image === grant.image_name
+                      ? 'Loading...'
+                      : grant.remaining_views <= 0
+                      ? 'No Views Left'
+                      : 'View Image'}
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Image Viewer Modal */}
+      {currentImage && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-4xl max-h-full overflow-auto">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">{currentImage.image}</h3>
+                <p className="text-sm text-gray-600">
+                  Owner: {currentImage.owner} | Remaining Views: <span className="font-bold text-green-600">{currentImage.remainingViews}</span>
+                </p>
+              </div>
+              <button
+                onClick={closeImageViewer}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-4">
+              <img
+                src={currentImage.url}
+                alt={currentImage.image}
+                className="max-w-full h-auto"
+              />
+            </div>
+            <div className="p-4 border-t border-gray-200 bg-yellow-50">
+              <p className="text-sm text-yellow-800">
+                ⚠️ This view has been counted. You have <strong>{currentImage.remainingViews}</strong> view{currentImage.remainingViews !== 1 ? 's' : ''} remaining.
+              </p>
+            </div>
+            <div className="p-4 border-t border-gray-200">
+              <button
+                onClick={closeImageViewer}
+                className="w-full bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-md font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

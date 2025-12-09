@@ -424,7 +424,7 @@ async fn update_encrypted_image_index(
         size_bytes: usize,
     }
 
-    let index_path = "encrypted_storage/encrypted_image_index.json";
+    let index_path = "client_images/encrypted_image_index.json";
 
     // Load existing index or create new
     let mut index: HashMap<String, ImageIndexEntry> = if tokio::fs::metadata(index_path).await.is_ok() {
@@ -860,8 +860,8 @@ pub async fn run_listener(
                         }
                     }
 
-                    // Save to encrypted_storage directory (Phase 0: Reorganization)
-                    let dir = "encrypted_storage";
+                    // Save to client_images directory (owner's own encrypted images)
+                    let dir = "client_images";
                     if let Err(e) = tokio::fs::create_dir_all(dir).await {
                         println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
                     }
