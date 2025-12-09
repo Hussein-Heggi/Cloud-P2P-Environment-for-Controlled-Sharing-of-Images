@@ -131,31 +131,69 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
 
+    // 🆕 MERGE images instead of replacing: Check if client already exists
+    let db_opt = {
+        let s = state.read().await;
+        s.firestore_db.clone()
+    };
+
+    // If client already exists in Firebase, read and merge images
+    let merged_images = if let Some(db) = &db_opt {
+        match firebase::read_client(db, &username).await {
+            Ok(Some(firebase_client)) => {
+                // Merge: existing images + new images (avoiding duplicates)
+                let mut all_images = firebase_client.actual_images.clone();
+                let new_count = actual_images.len();
+                for img in actual_images.into_iter() {
+                    if !all_images.contains(&img) {
+                        all_images.push(img.clone());
+                        println!("[LEADER] 📝 Merging new image '{}' for client {}",
+                                 img, username);
+                    }
+                }
+                println!("[LEADER] ✅ Merged images for {}: {} existing + {} new = {} total",
+                         username, firebase_client.actual_images.len(),
+                         new_count, all_images.len());
+                all_images
+            }
+            Ok(None) => {
+                println!("[LEADER] ℹ️  New client {}, using {} provided images", username, actual_images.len());
+                actual_images
+            }
+            Err(e) => {
+                warn!("Failed to read existing client {} from Firebase: {}", username, e);
+                println!("[LEADER] ⚠️  Using provided images due to Firebase error");
+                actual_images
+            }
+        }
+    } else {
+        actual_images
+    };
+
     let client = DosClient {
         client_name: username.clone(),
         client_ip,
         client_port,
-        actual_images,
+        actual_images: merged_images,
         last_seen: now,
         online: true,
     };
 
-    debug!("Leader writing client {} to Firebase", username);
+    debug!("Leader writing client {} to Firebase with {} images", username, client.actual_images.len());
 
     // Write to Firebase
-    let s = state.read().await;
-    if let Some(db) = &s.firestore_db {
+    if let Some(db) = &db_opt {
         firebase::write_client(db, &client).await?;
     }
-    drop(s);
 
     // Update local state
+    let num_images = client.actual_images.len();
     let mut s = state.write().await;
     s.dos_clients.insert(username.clone(), client);
     s.dos_c_version += 1;
     drop(s);
 
-    info!("Client {} added to DOS-S", username);
+    info!("Client {} added/updated in DOS-S with {} images", username, num_images);
 
     Ok(())
 }

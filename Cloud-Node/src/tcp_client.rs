@@ -242,7 +242,7 @@ async fn route_client_message(
 
         x if x == client_protocol::OWNER_IMAGE_CHUNK => {
             info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_CHUNK from client");
-            handle_owner_image_chunk(state, stream, peer_addr, payload).await
+            handle_owner_image_chunk(state, &cfg, stream, peer_addr, payload).await
         }
 
         x if x == client_protocol::SYNC_USAGE => {
@@ -950,6 +950,7 @@ async fn handle_owner_image_meta(
 /// kind: 0=true, 1=cover, 2=meta
 async fn handle_owner_image_chunk(
     state: SharedState,
+    cfg: &Config,
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
     peer_addr: SocketAddr,
     payload: &[u8],
@@ -1040,35 +1041,76 @@ async fn handle_owner_image_chunk(
                         println!("[OWNER UPLOAD] ✅ Encrypted image saved to Cloud-Node/embedded/");
                     }
 
-                    // DIAGNOSTIC: Check for duplicate send_embedded_image calls
-                    use std::sync::atomic::{AtomicBool, Ordering};
-                    static SEND_GUARD: AtomicBool = AtomicBool::new(false);
-
-                    if SEND_GUARD.swap(true, Ordering::SeqCst) {
-                        warn!("⚠️  DUPLICATE send_embedded_image call detected for {}/{}!", owner, image_name);
-                        println!("[OWNER UPLOAD] ⚠️  WARNING: Duplicate send attempt blocked!");
+                    // Send encrypted image back to owner
+                    println!("[OWNER UPLOAD] 📤 Sending encrypted image back to owner...");
+                    if let Err(e) = send_embedded_image(stream.clone(), &image_name, &encrypted_png).await {
+                        warn!(error=%e, "Failed to send encrypted image to owner");
                     } else {
-                        // Send encrypted image back to owner
-                        println!("[OWNER UPLOAD] 📤 Sending encrypted image back to owner...");
-                        if let Err(e) = send_embedded_image(stream.clone(), &image_name, &encrypted_png).await {
-                            warn!(error=%e, "Failed to send encrypted image to owner");
-                            SEND_GUARD.store(false, Ordering::SeqCst); // Reset on error
-                        } else {
-                            println!("[OWNER UPLOAD] ✅ Encrypted image sent to owner successfully!");
-                            println!(
-                                "╔════════════════════════════════════════════════════════════════╗"
-                            );
-                            println!(
-                                "║ ENCRYPTION COMPLETE: {}/{}",
-                                owner, image_name
-                            );
-                            println!(
-                                "║ Owner should receive and save encrypted image locally"
-                            );
-                            println!(
-                                "╚════════════════════════════════════════════════════════════════╝"
-                            );
-                            // Keep SEND_GUARD true to prevent future duplicates
+                        println!("[OWNER UPLOAD] ✅ Encrypted image sent to owner successfully!");
+                        println!(
+                            "╔════════════════════════════════════════════════════════════════╗"
+                        );
+                        println!(
+                            "║ ENCRYPTION COMPLETE: {}/{}",
+                            owner, image_name
+                        );
+                        println!(
+                            "║ Owner should receive and save encrypted image locally"
+                        );
+                        println!(
+                            "╚════════════════════════════════════════════════════════════════╝"
+                        );
+
+                        // 🆕 UPDATE DOS: Add encrypted image to owner's actual_images
+                        println!("[OWNER UPLOAD] 📝 Updating DOS with encrypted image...");
+                        let encrypted_image_name = format!("{}_encrypted.png", image_name);
+
+                        let (client_ip, client_port, updated_images) = {
+                            let mut s = state.write().await;
+
+                            // First, update the client's images and get the data we need
+                            let result = if let Some(client) = s.dos_clients.get_mut(&owner) {
+                                let updated = if !client.actual_images.contains(&encrypted_image_name) {
+                                    client.actual_images.push(encrypted_image_name.clone());
+                                    println!("[OWNER UPLOAD] ✅ DOS updated locally: added '{}'", encrypted_image_name);
+                                    true
+                                } else {
+                                    println!("[OWNER UPLOAD] ℹ️  Image '{}' already in DOS", encrypted_image_name);
+                                    false
+                                };
+                                Some((client.client_ip.clone(), client.client_port, client.actual_images.clone(), updated))
+                            } else {
+                                warn!("Owner '{}' not found in DOS during update", owner);
+                                None
+                            };
+
+                            // Now update the version (after releasing the borrow from get_mut)
+                            if let Some((ip, port, images, true)) = result {
+                                s.dos_c_version += 1;
+                                (ip, port, images)
+                            } else if let Some((ip, port, images, false)) = result {
+                                (ip, port, images)
+                            } else {
+                                (String::new(), 0, Vec::new())
+                            }
+                        };
+
+                        // 🆕 NOTIFY LEADER: Update Firebase with new image
+                        if !client_ip.is_empty() {
+                            println!("[OWNER UPLOAD] 📡 Notifying leader to update Firebase...");
+                            if let Err(e) = notify_leader_add_client(
+                                cfg,
+                                &owner,
+                                client_ip,
+                                client_port,
+                                updated_images,
+                            ).await {
+                                warn!(error=%e, "Failed to notify leader about new encrypted image");
+                                println!("[OWNER UPLOAD] ⚠️  Failed to notify leader: {}", e);
+                            } else {
+                                println!("[OWNER UPLOAD] ✅ Leader notified - Firebase will be updated");
+                                println!("[OWNER UPLOAD] ℹ️  DOS broadcast will sync to all clients within 5s");
+                            }
                         }
                     }
                 }
@@ -1084,23 +1126,15 @@ async fn handle_owner_image_chunk(
             if let Some(imgs) = s.owner_images.get_mut(&owner) {
                 imgs.remove(&image_name);
             }
-        } else {
-            // Still receiving chunks - just ack
-            let mut ack = Vec::new();
-            ack.extend(0u32.to_le_bytes());
-            send_tcp_response(stream, client_protocol::SERVER_PONG, &ack).await?;
         }
-    } else {
-        // No assets found or chunk failed - just ack
-        let mut ack = Vec::new();
-        ack.extend(0u32.to_le_bytes());
-        send_tcp_response(stream, client_protocol::SERVER_PONG, &ack).await?;
+        // ✅ NO ACK needed - TCP guarantees delivery, client doesn't wait for response
     }
 
     Ok(())
 }
 
 /// Helper: send an embedded image as IMAGE_CHUNK messages to the connected client
+/// OPTIMIZED: Batches writes and only flushes periodically to avoid 10k+ flush() calls
 async fn send_embedded_image(
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
     image_name: &str,
@@ -1109,9 +1143,17 @@ async fn send_embedded_image(
     let chunk_size = 1000usize;
     let total_chunks = ((data.len() as f32) / (chunk_size as f32)).ceil() as u32;
 
-    println!("[SEND-IMAGE] Starting to send {} chunks for image '{}'", total_chunks, image_name);
+    println!("[SEND-IMAGE] Starting to send {} chunks for image '{}' (OPTIMIZED - batched writes)", total_chunks, image_name);
+
+    // Lock stream once for entire transfer
+    let mut stream_guard = stream.lock().await;
+    let flush_interval = 100; // Flush every 100 chunks to balance memory and latency
 
     for (idx, chunk) in data.chunks(chunk_size).enumerate() {
+        // Build IMAGE_CHUNK message
+        let mut msg = Vec::new();
+
+        // Build payload first
         let mut payload = Vec::new();
         payload.extend((image_name.len() as u16).to_le_bytes());
         payload.extend(image_name.as_bytes());
@@ -1120,21 +1162,29 @@ async fn send_embedded_image(
         payload.extend((chunk.len() as u16).to_le_bytes());
         payload.extend(chunk);
 
-        // DIAGNOSTIC: Log each chunk being sent
-        println!(
-            "[SEND-IMAGE-CHUNK] {}/{}: name='{}' seq={} chunk_len={} payload_len={}",
-            idx + 1,
-            total_chunks,
-            image_name,
-            idx,
-            chunk.len(),
-            payload.len()
-        );
+        // Build complete message with length prefix
+        let total_len = 1 + payload.len();
+        msg.extend((total_len as u32).to_le_bytes());
+        msg.push(client_protocol::IMAGE_CHUNK);
+        msg.extend_from_slice(&payload);
 
-        send_tcp_response(stream.clone(), client_protocol::IMAGE_CHUNK, &payload).await?;
+        // Write to stream (buffered by TCP)
+        stream_guard.write_all(&msg).await?;
+
+        // Only flush periodically (every 100 chunks) and at the end
+        if (idx + 1) % flush_interval == 0 || (idx + 1) == total_chunks as usize {
+            stream_guard.flush().await?;
+            println!(
+                "[SEND-IMAGE] 🚀 Progress: {}/{} chunks sent and flushed",
+                idx + 1,
+                total_chunks
+            );
+        }
     }
 
-    println!("[SEND-IMAGE] ✅ Completed sending all {} chunks for '{}'", total_chunks, image_name);
+    let flush_count = (total_chunks as usize + flush_interval - 1) / flush_interval;
+    println!("[SEND-IMAGE] ✅ Completed sending all {} chunks for '{}' (total flushes: ~{})",
+             total_chunks, image_name, flush_count);
     Ok(())
 }
 
@@ -1214,17 +1264,24 @@ pub async fn broadcast_dos_to_clients(
         // Build DOS payload excluding this client (self-exclusion)
         let dos_payload = build_dos_payload_from_firebase(&firebase_dos, &username);
 
-        // Send DOS_UPDATE via TCP
+        // Send DOS_UPDATE via TCP with correct protocol (4-byte length prefix)
         let msg_type = client_protocol::DOS_UPDATE;
-        let mut message = Vec::with_capacity(1 + dos_payload.len());
-        message.push(msg_type);
-        message.extend_from_slice(&dos_payload);
+        let total_len = 1 + dos_payload.len(); // msg_type (1 byte) + payload
+
+        let mut message = Vec::with_capacity(4 + total_len);
+        message.extend((total_len as u32).to_le_bytes()); // ✅ 4-byte length prefix
+        message.push(msg_type);                            // 1-byte message type
+        message.extend_from_slice(&dos_payload);          // N-byte payload
 
         // Lock the stream and write the message
         let mut stream = stream_mutex.lock().await;
         match stream.write_all(&message).await {
             Ok(_) => {
-                println!("[DOS-BROADCAST] ✅ Sent {} bytes to {}", message.len(), username);
+                if let Err(e) = stream.flush().await {
+                    eprintln!("[DOS-BROADCAST] ❌ Failed to flush for {}: {}", username, e);
+                } else {
+                    println!("[DOS-BROADCAST] ✅ Sent {} bytes (+ 4-byte prefix) to {}", total_len, username);
+                }
             }
             Err(e) => {
                 eprintln!("[DOS-BROADCAST] ❌ Failed to send to {}: {}", username, e);

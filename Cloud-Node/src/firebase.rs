@@ -240,6 +240,27 @@ pub async fn read_all_clients(db: &FirestoreDb) -> Result<HashMap<String, DosCli
     Ok(clients)
 }
 
+/// Read a single client from Firebase by username
+pub async fn read_client(db: &FirestoreDb, client_name: &str) -> Result<Option<DosClient>> {
+    debug!("Reading client {} from Firebase", client_name);
+
+    let result: Option<DosClient> = db
+        .fluent()
+        .select()
+        .by_id_in("dos_s_clients")
+        .obj()
+        .one(client_name)
+        .await
+        .context("Failed to read client from Firebase")?;
+
+    match &result {
+        Some(_) => debug!("Found client {} in Firebase", client_name),
+        None => debug!("Client {} not found in Firebase", client_name),
+    }
+
+    Ok(result)
+}
+
 /// Read all access records from Firebase
 pub async fn read_all_access(db: &FirestoreDb) -> Result<HashMap<String, DosAccess>> {
     debug!("Reading all access records from Firebase");

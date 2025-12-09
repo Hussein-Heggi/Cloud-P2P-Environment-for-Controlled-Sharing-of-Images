@@ -419,9 +419,8 @@ pub async fn run_listener(
                         } else {
                             println!("[CLIENT] ✅ DOS_QUERY sent");
                         }
-                    } else {
-                        println!("[CLIENT] ✅ PONG received - DOS version: {}", dos_version);
                     }
+                    // Silently accept PONGs with unchanged version (reduces spam from heartbeat)
                 } else {
                     println!("[CLIENT-LISTENER] SERVER_PONG too short ({} bytes)", data.len());
                 }
@@ -819,8 +818,15 @@ pub async fn upload_owner_image_with_writer(
         "║ Server will encrypt true image into cover and send back..."
     );
     println!(
+        "║ 📥 The listener task will receive and save the encrypted image"
+    );
+    println!(
         "╚════════════════════════════════════════════════════════════════╝"
     );
+    println!();
+    println!("[UPLOAD-TASK] ✅ Upload complete - waiting for encrypted image from server...");
+    println!("[UPLOAD-TASK] 💡 The encrypted image will be saved automatically by the listener");
+    println!();
 
     Ok(())
 }
