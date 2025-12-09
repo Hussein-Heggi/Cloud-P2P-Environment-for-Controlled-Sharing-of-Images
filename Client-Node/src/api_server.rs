@@ -255,14 +255,14 @@ async fn get_notifications(State(api_state): State<ApiState>) -> Json<Vec<Pendin
     Json(notifications)
 }
 
-/// POST /api/approve/:request_id - Approve a view request
+/// POST /api/approve/:request_id - Approve a view request (P2P)
 async fn approve_request(
     State(api_state): State<ApiState>,
     Path(request_id): Path<u32>,
 ) -> Result<Json<ApproveResponse>, (StatusCode, String)> {
-    crate::owner::approve_request(
+    // Use P2P approval (sends image directly to viewer)
+    crate::owner::approve_peer_view_request(
         api_state.client_state.clone(),
-        api_state.writer.clone(),
         request_id,
     )
     .await
@@ -270,7 +270,7 @@ async fn approve_request(
 
     Ok(Json(ApproveResponse {
         success: true,
-        message: format!("Request {} approved", request_id),
+        message: format!("Request {} approved via P2P", request_id),
     }))
 }
 

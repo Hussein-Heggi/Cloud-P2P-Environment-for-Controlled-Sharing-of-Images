@@ -865,9 +865,23 @@ pub async fn run_listener(
 
                     // Determine if this is viewer-received or owner's own image
                     // Check if we have a pending request for this image (means we're a viewer)
-                    let is_viewer_image = {
+                    let (is_viewer_image, owner_name, requested_views) = {
                         let s = state.read().await;
-                        s.my_requests.values().any(|req| req.image_name == clean_name)
+
+                        println!("[CLIENT-LISTENER] Checking if '{}' is a viewer image", clean_name);
+                        println!("[CLIENT-LISTENER] Current my_requests: {:?}", s.my_requests.keys().collect::<Vec<_>>());
+
+                        for req in s.my_requests.values() {
+                            println!("[CLIENT-LISTENER]   Request: image={}, owner={}", req.image_name, req.owner);
+                        }
+
+                        if let Some(req) = s.my_requests.values().find(|req| req.image_name == clean_name) {
+                            println!("[CLIENT-LISTENER] ✓ Found matching request for '{}' from owner '{}'", clean_name, req.owner);
+                            (true, req.owner.clone(), req.requested_views)
+                        } else {
+                            println!("[CLIENT-LISTENER] ✗ No matching request found for '{}'", clean_name);
+                            (false, String::new(), 0)
+                        }
                     };
 
                     let (dir, path) = if is_viewer_image {
@@ -916,16 +930,8 @@ pub async fn run_listener(
                             if is_viewer_image {
                                 use crate::viewer::ViewerAccessMap;
 
-                                // Find the request to get owner and granted views
-                                let (owner, granted_views) = {
-                                    let s = state.read().await;
-                                    s.my_requests.values()
-                                        .find(|req| req.image_name == clean_name)
-                                        .map(|req| (req.owner.clone(), req.requested_views))
-                                        .unwrap_or(("unknown".to_string(), 5))
-                                };
-
-                                println!("[CLIENT-LISTENER] 📝 Adding to ViewerAccessMap: {} from {}", clean_name, owner);
+                                println!("[CLIENT-LISTENER] 📝 Adding to ViewerAccessMap: {} from {} ({} views)",
+                                         clean_name, owner_name, requested_views);
 
                                 let map_path = ViewerAccessMap::default_path()
                                     .unwrap_or_else(|_| std::path::PathBuf::from("viewer_access_map.json"));
@@ -933,12 +939,12 @@ pub async fn run_listener(
                                 let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
                                     .unwrap_or_else(|_| ViewerAccessMap::new());
 
-                                viewer_map.add_grant(&owner, clean_name, granted_views, &path);
+                                viewer_map.add_grant(&owner_name, clean_name, requested_views, &path);
 
                                 if let Err(e) = viewer_map.save_to_file(&map_path).await {
                                     println!("[CLIENT-LISTENER] ⚠️  Failed to save ViewerAccessMap: {}", e);
                                 } else {
-                                    println!("[CLIENT-LISTENER] ✅ Added to ViewerAccessMap with {} views", granted_views);
+                                    println!("[CLIENT-LISTENER] ✅ Added to ViewerAccessMap with {} views", requested_views);
                                 }
                             } else {
                                 // Update encrypted image index (for owner's own images)
