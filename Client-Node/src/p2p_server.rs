@@ -10,6 +10,16 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::simple_client::SharedClientState;
 use crate::protocol;
 
+/// Normalize image name by stripping .png extension for logical operations
+/// Physical file operations should use the full name with extension
+fn normalize_image_name(name: &str) -> String {
+    if name.ends_with(".png") {
+        name.trim_end_matches(".png").to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Start P2P listener by binding to port range 9080+
 /// Returns (TcpListener, bound_port)
 pub async fn start_p2p_listener(
@@ -78,26 +88,29 @@ async fn handle_peer_connection(
     println!("[P2P_SERVER] Handling connection from peer: {}", peer_addr);
 
     loop {
-        // Read message type (1 byte)
-        let mut msg_type_buf = [0u8; 1];
-        match stream.read_exact(&mut msg_type_buf).await {
+        // Read total length (u32) - standard protocol format: [len][msg_type][payload]
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 println!("[P2P_SERVER] Peer {} disconnected", peer_addr);
                 break;
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Failed to read message type: {}", e));
+                return Err(anyhow::anyhow!("Failed to read message length: {}", e));
             }
         }
 
+        let total_len = u32::from_le_bytes(len_buf) as usize;
+
+        // Read message type (1 byte)
+        let mut msg_type_buf = [0u8; 1];
+        stream.read_exact(&mut msg_type_buf).await
+            .context("Failed to read message type")?;
         let msg_type = msg_type_buf[0];
 
-        // Read payload length (u32)
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).await
-            .context("Failed to read payload length")?;
-        let payload_len = u32::from_le_bytes(len_buf) as usize;
+        // Calculate payload length (total_len includes msg_type)
+        let payload_len = total_len - 1;
 
         // Read payload
         let mut payload = vec![0u8; payload_len];
@@ -186,8 +199,11 @@ async fn handle_peer_view_request(
         return Err(anyhow::anyhow!("Invalid image name"));
     }
 
-    let image_name = String::from_utf8(data[offset..offset + image_len].to_vec())?;
+    let image_name_raw = String::from_utf8(data[offset..offset + image_len].to_vec())?;
     offset += image_len;
+
+    // Normalize image name (strip .png extension for comparison)
+    let image_name = normalize_image_name(&image_name_raw);
 
     // Parse requested views
     if data.len() < offset + 4 {
@@ -196,8 +212,8 @@ async fn handle_peer_view_request(
 
     let requested_views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
 
-    println!("[P2P_SERVER] 📥 PEER_VIEW_REQUEST: viewer={}, image={}, views={}",
-             viewer_name, image_name, requested_views);
+    println!("[P2P_SERVER] 📥 PEER_VIEW_REQUEST: viewer={}, image={} (normalized from {}), views={}",
+             viewer_name, image_name, image_name_raw, requested_views);
 
     // Phase 3B: Store request in pending_view_requests for owner approval
     // Generate unique request ID
@@ -209,14 +225,40 @@ async fn handle_peer_view_request(
         s.username.clone()
     };
 
-    // Check if we own this image
-    let has_image = {
-        let s = state.read().await;
-        s.actual_images.contains(&image_name)
+    // Check if we own this image by reading encrypted_storage directory
+    println!("[P2P_SERVER] 🔍 Checking encrypted_storage directory for image '{}'", image_name);
+
+    let encrypted_storage = std::path::Path::new("encrypted_storage");
+    let has_image = if encrypted_storage.exists() {
+        match tokio::fs::read_dir(encrypted_storage).await {
+            Ok(mut entries) => {
+                let mut found = false;
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    if let Ok(file_name) = entry.file_name().into_string() {
+                        // Normalize filename (strip .png)
+                        let normalized_file = normalize_image_name(&file_name);
+                        println!("[P2P_SERVER]   - Found file: {} (normalized: {})", file_name, normalized_file);
+                        if normalized_file == image_name {
+                            println!("[P2P_SERVER] ✅ Match found: {} == {}", normalized_file, image_name);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                found
+            }
+            Err(e) => {
+                println!("[P2P_SERVER] ⚠️  Failed to read encrypted_storage directory: {}", e);
+                false
+            }
+        }
+    } else {
+        println!("[P2P_SERVER] ⚠️  encrypted_storage directory does not exist");
+        false
     };
 
     if !has_image {
-        println!("[P2P_SERVER] ❌ Image '{}' not found in our images", image_name);
+        println!("[P2P_SERVER] ❌ Image '{}' not found in encrypted_storage directory", image_name);
         // Send PEER_VIEW_REJECTED
         let mut payload = Vec::new();
         let reason = "Image not found";

@@ -19,6 +19,16 @@ use crate::viewer::{PendingRequest, DownloadedImage};
 use crate::owner::PendingViewRequest;
 use crate::local_access_map::LocalAccessMap;
 
+/// Normalize image name by stripping .png extension for logical operations
+/// Physical file operations should use the full name with extension
+fn normalize_image_name(name: &str) -> String {
+    if name.ends_with(".png") {
+        name.trim_end_matches(".png").to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Fixed client listen/advertised port for TCP (starting port for P2P range)
 pub const CLIENT_PORT: u16 = 9080;
 
@@ -108,17 +118,22 @@ impl ClientState {
 
     /// Set images from command line (first = cover if multiple, rest = actual)
     pub fn set_images(&mut self, images: Vec<String>) {
-        if images.len() > 1 {
+        // Normalize all image names (strip .png)
+        let normalized_images: Vec<String> = images.iter()
+            .map(|name| normalize_image_name(name))
+            .collect();
+
+        if normalized_images.len() > 1 {
             // Multiple images: first = cover, rest = actual
-            self.cover_image = Some(images[0].clone());
-            self.actual_images = images[1..].to_vec();
-            println!("[CLIENT] Cover image: {}", images[0]);
-            println!("[CLIENT] Actual images: {:?}", self.actual_images);
-        } else if images.len() == 1 {
+            self.cover_image = Some(normalized_images[0].clone());
+            self.actual_images = normalized_images[1..].to_vec();
+            println!("[CLIENT] Cover image: {} (normalized)", normalized_images[0]);
+            println!("[CLIENT] Actual images (normalized): {:?}", self.actual_images);
+        } else if normalized_images.len() == 1 {
             // Single image: actual only, no cover
             self.cover_image = None;
-            self.actual_images = images;
-            println!("[CLIENT] Actual images: {:?}", self.actual_images);
+            self.actual_images = normalized_images;
+            println!("[CLIENT] Actual images (normalized): {:?}", self.actual_images);
             println!("[CLIENT] No cover image (single image provided)");
         } else {
             // No images
@@ -519,6 +534,18 @@ pub async fn run_listener(
                 match crate::dos::parse_dos_c_from_join_ack(&data) {
                     Ok((clients, dos_c_version)) => {
                         let mut s = state.write().await;
+                        let my_username = s.username.clone();
+
+                        // Check if our images are in the DOS and sync them to actual_images
+                        if let Some(my_entry) = clients.iter().find(|(name, _)| *name == &my_username) {
+                            let my_images = &my_entry.1.images;
+                            if !my_images.is_empty() && my_images != &s.actual_images {
+                                println!("[CLIENT] 🔄 Syncing own images from DOS: {:?}", my_images);
+                                s.actual_images = my_images.clone();
+                                println!("[CLIENT] ✅ Updated actual_images to match DOS");
+                            }
+                        }
+
                         s.dos.update(clients, dos_c_version);
                         println!("[CLIENT] ✅ DOS-C updated to version {} with {} clients",
                                  dos_c_version, s.dos.get_all_clients().len());
@@ -711,8 +738,20 @@ pub async fn run_listener(
                     Ok((clients, dos_version)) => {
                         println!("[CLIENT] Parsed updated DOS-C: {} clients, version {}", clients.len(), dos_version);
 
-                        // Update state with new DOS-C
+                        // Update state with new DOS-C AND update own actual_images if we're in the DOS
                         let mut s = state.write().await;
+                        let my_username = s.username.clone();
+
+                        // Check if our images are in the DOS and sync them to actual_images
+                        if let Some(my_entry) = clients.iter().find(|(name, _)| *name == &my_username) {
+                            let my_images = &my_entry.1.images;
+                            if !my_images.is_empty() && my_images != &s.actual_images {
+                                println!("[CLIENT] 🔄 Syncing own images from DOS: {:?}", my_images);
+                                s.actual_images = my_images.clone();
+                                println!("[CLIENT] ✅ Updated actual_images to match DOS");
+                            }
+                        }
+
                         s.dos.update(clients, dos_version);
                         s.dos_version = dos_version as u32;
 

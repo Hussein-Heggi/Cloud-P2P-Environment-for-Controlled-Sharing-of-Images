@@ -15,6 +15,16 @@ use crate::{
     state::{SharedState, StoredImageAssets},
 };
 
+/// Normalize image name by stripping .png extension for logical operations
+/// Physical file operations should use the full name with extension
+fn normalize_image_name(name: &str) -> String {
+    if name.ends_with(".png") {
+        name.trim_end_matches(".png").to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Run TCP server for client connections
 pub async fn run_tcp_client_server(
     state: SharedState,
@@ -399,9 +409,12 @@ async fn handle_join_tcp(
 
     // NEW P2P Architecture: All images are actual_images (no cover split)
     // Owner will provide cover per-request when encrypting
-    let actual_images = images;
+    // Normalize image names (strip .png for logical operations)
+    let actual_images: Vec<String> = images.iter()
+        .map(|name| normalize_image_name(name))
+        .collect();
 
-    println!("[HANDLE_JOIN_TCP] Registered images: actual={:?}", actual_images);
+    println!("[HANDLE_JOIN_TCP] Registered images (normalized): actual={:?}", actual_images);
 
     // Register client in state
     let now_ms = std::time::SystemTime::now()
@@ -1024,21 +1037,21 @@ async fn handle_owner_image_chunk(
                             "╚════════════════════════════════════════════════════════════════╝"
                         );
 
-                        // 🆕 UPDATE DOS: Add encrypted image to owner's actual_images
-                        println!("[OWNER UPLOAD] 📝 Updating DOS with encrypted image...");
-                        let encrypted_image_name = format!("{}_encrypted.png", image_name);
+                        // 🆕 UPDATE DOS: Add image to owner's actual_images (normalized name without .png)
+                        let normalized_name = normalize_image_name(&image_name);
+                        println!("[OWNER UPLOAD] 📝 Updating DOS with image '{}' (normalized from '{}')...", normalized_name, image_name);
 
                         let (client_ip, client_port, updated_images) = {
                             let mut s = state.write().await;
 
                             // First, update the client's images and get the data we need
                             let result = if let Some(client) = s.dos_clients.get_mut(&owner) {
-                                let updated = if !client.actual_images.contains(&encrypted_image_name) {
-                                    client.actual_images.push(encrypted_image_name.clone());
-                                    println!("[OWNER UPLOAD] ✅ DOS updated locally: added '{}'", encrypted_image_name);
+                                let updated = if !client.actual_images.contains(&normalized_name) {
+                                    client.actual_images.push(normalized_name.clone());
+                                    println!("[OWNER UPLOAD] ✅ DOS updated locally: added '{}'", normalized_name);
                                     true
                                 } else {
-                                    println!("[OWNER UPLOAD] ℹ️  Image '{}' already in DOS", encrypted_image_name);
+                                    println!("[OWNER UPLOAD] ℹ️  Image '{}' already in DOS", normalized_name);
                                     false
                                 };
                                 Some((client.client_ip.clone(), client.client_port, client.actual_images.clone(), updated))
