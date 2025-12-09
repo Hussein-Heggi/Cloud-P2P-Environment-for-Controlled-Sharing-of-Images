@@ -128,18 +128,44 @@ async fn send_tcp_message_generic<W: AsyncWrite + Unpin>(
 async fn recv_tcp_message_generic<R: AsyncRead + Unpin>(
     stream: &mut R,
 ) -> Result<(u8, Vec<u8>)> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let call_num = CALL_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("[CLIENT-RECV-DEBUG] 📞 recv_tcp_message_generic called (call #{})", call_num);
+    println!("[CLIENT-RECV-DEBUG] ⏳ About to read 4-byte length prefix...");
+
     // Read length prefix
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let total_len = u32::from_le_bytes(len_buf) as usize;
 
+    // DIAGNOSTIC: Log length prefix bytes
+    println!(
+        "[CLIENT-RECV-DEBUG] ✅ Length prefix read successfully!"
+    );
+    println!(
+        "[CLIENT-RECV-DEBUG] 📏 Raw bytes: {:02x?} -> decoded length: {}",
+        len_buf,
+        total_len
+    );
+
     if total_len == 0 || total_len > 65536 {
+        println!("[CLIENT-RECV-DEBUG] ❌ ERROR: Invalid message length: {}", total_len);
+        println!("[CLIENT-RECV-DEBUG] 🔍 This suggests TCP stream desynchronization!");
+        println!("[CLIENT-RECV-DEBUG] 🔍 Length bytes interpreted as: {:02x?}", len_buf);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         return Err(anyhow::anyhow!("Invalid message length: {}", total_len));
     }
+
+    println!("[CLIENT-RECV-DEBUG] ⏳ Now reading {} bytes of message data...", total_len);
 
     // Read message data
     let mut buf = vec![0u8; total_len];
     stream.read_exact(&mut buf).await?;
+
+    println!("[CLIENT-RECV-DEBUG] ✅ Message data read successfully!");
 
     if buf.is_empty() {
         return Err(anyhow::anyhow!("Empty message"));
@@ -148,12 +174,20 @@ async fn recv_tcp_message_generic<R: AsyncRead + Unpin>(
     let msg_type = buf[0];
     let payload = buf[1..].to_vec();
 
+    // DIAGNOSTIC: Log first 16 bytes of message for debugging
+    let preview_len = std::cmp::min(16, buf.len());
     println!(
-        "[CLIENT-RECV] len={} msg_type={} payload_len={}",
+        "[CLIENT-RECV-DEBUG] 📦 Message details: len={} msg_type={} payload_len={}",
         total_len,
         msg_type,
         payload.len()
     );
+    println!(
+        "[CLIENT-RECV-DEBUG] 🔍 First {} bytes: {:02x?}",
+        preview_len,
+        &buf[..preview_len]
+    );
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     Ok((msg_type, payload))
 }
@@ -325,7 +359,10 @@ pub async fn run_listener(
     mut reader: tokio::net::tcp::OwnedReadHalf,
     writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
 ) -> Result<()> {
-    println!("[CLIENT-LISTENER] Started");
+    println!("╔════════════════════════════════════════════════════════════════╗");
+    println!("║ [CLIENT-LISTENER] 🚀 STARTED - Ready to receive messages      ║");
+    println!("║ This listener will receive IMAGE_CHUNK and other messages     ║");
+    println!("╚════════════════════════════════════════════════════════════════╝");
 
     #[derive(Default)]
     struct IncomingImage {
@@ -333,12 +370,18 @@ pub async fn run_listener(
         chunks: HashMap<u32, Vec<u8>>,
     }
     let mut images: HashMap<String, IncomingImage> = HashMap::new();
+    let mut msg_count = 0u64;
 
     loop {
+        println!("\n[CLIENT-LISTENER] 🔄 Waiting for message #{} from server...", msg_count + 1);
         let (msg_type, data) = match recv_tcp_message_generic(&mut reader).await {
-            Ok(msg) => msg,
+            Ok(msg) => {
+                msg_count += 1;
+                println!("[CLIENT-LISTENER] ✅ Received message #{}", msg_count);
+                msg
+            },
             Err(e) => {
-                println!("[CLIENT-LISTENER] Connection closed or error: {}", e);
+                println!("[CLIENT-LISTENER] ❌ Connection closed or error: {}", e);
                 return Err(e);
             }
         };
@@ -540,6 +583,7 @@ pub async fn run_listener(
             }
 
             IMAGE_CHUNK => {
+                println!("[CLIENT-LISTENER] 📦 IMAGE_CHUNK message received!");
                 // Parse: [name_len:u16][name][seq:u32][total:u32][chunk_len:u16][chunk]
                 let mut offset = 0;
                 if data.len() < 2 {
@@ -572,6 +616,16 @@ pub async fn run_listener(
                 });
                 entry.total_chunks = total;
                 entry.chunks.insert(seq, chunk);
+
+                // Show progress
+                let progress = (entry.chunks.len() as f32 / entry.total_chunks as f32) * 100.0;
+                println!(
+                    "[CLIENT-LISTENER] 📥 Chunk {}/{} for '{}' ({:.1}% complete)",
+                    entry.chunks.len(),
+                    entry.total_chunks,
+                    name,
+                    progress
+                );
 
                 if entry.chunks.len() as u32 == entry.total_chunks {
                     println!(

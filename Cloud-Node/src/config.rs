@@ -47,7 +47,7 @@ pub struct Config {
     pub load_broadcast_every_ms: u64,
 
     /// Minimum load difference (0.0-1.0) required to switch executors
-    #[arg(long, default_value_t = 0.05)]
+    #[arg(long, default_value_t = 0.5)]
     pub executor_switch_threshold: f32,
 
     // -------- Failure simulation (re-enabled) --------

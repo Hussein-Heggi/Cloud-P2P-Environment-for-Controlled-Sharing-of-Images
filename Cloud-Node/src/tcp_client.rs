@@ -1040,25 +1040,36 @@ async fn handle_owner_image_chunk(
                         println!("[OWNER UPLOAD] ✅ Encrypted image saved to Cloud-Node/embedded/");
                     }
 
-                    // Send encrypted image back to owner
-                    println!("[OWNER UPLOAD] 📤 Sending encrypted image back to owner...");
-                    if let Err(e) = send_embedded_image(stream.clone(), &image_name, &encrypted_png).await {
-                        warn!(error=%e, "Failed to send encrypted image to owner");
+                    // DIAGNOSTIC: Check for duplicate send_embedded_image calls
+                    use std::sync::atomic::{AtomicBool, Ordering};
+                    static SEND_GUARD: AtomicBool = AtomicBool::new(false);
+
+                    if SEND_GUARD.swap(true, Ordering::SeqCst) {
+                        warn!("⚠️  DUPLICATE send_embedded_image call detected for {}/{}!", owner, image_name);
+                        println!("[OWNER UPLOAD] ⚠️  WARNING: Duplicate send attempt blocked!");
                     } else {
-                        println!("[OWNER UPLOAD] ✅ Encrypted image sent to owner successfully!");
-                        println!(
-                            "╔════════════════════════════════════════════════════════════════╗"
-                        );
-                        println!(
-                            "║ ENCRYPTION COMPLETE: {}/{}",
-                            owner, image_name
-                        );
-                        println!(
-                            "║ Owner should receive and save encrypted image locally"
-                        );
-                        println!(
-                            "╚════════════════════════════════════════════════════════════════╝"
-                        );
+                        // Send encrypted image back to owner
+                        println!("[OWNER UPLOAD] 📤 Sending encrypted image back to owner...");
+                        if let Err(e) = send_embedded_image(stream.clone(), &image_name, &encrypted_png).await {
+                            warn!(error=%e, "Failed to send encrypted image to owner");
+                            SEND_GUARD.store(false, Ordering::SeqCst); // Reset on error
+                        } else {
+                            println!("[OWNER UPLOAD] ✅ Encrypted image sent to owner successfully!");
+                            println!(
+                                "╔════════════════════════════════════════════════════════════════╗"
+                            );
+                            println!(
+                                "║ ENCRYPTION COMPLETE: {}/{}",
+                                owner, image_name
+                            );
+                            println!(
+                                "║ Owner should receive and save encrypted image locally"
+                            );
+                            println!(
+                                "╚════════════════════════════════════════════════════════════════╝"
+                            );
+                            // Keep SEND_GUARD true to prevent future duplicates
+                        }
                     }
                 }
                 Err(e) => {
@@ -1097,6 +1108,9 @@ async fn send_embedded_image(
 ) -> Result<()> {
     let chunk_size = 1000usize;
     let total_chunks = ((data.len() as f32) / (chunk_size as f32)).ceil() as u32;
+
+    println!("[SEND-IMAGE] Starting to send {} chunks for image '{}'", total_chunks, image_name);
+
     for (idx, chunk) in data.chunks(chunk_size).enumerate() {
         let mut payload = Vec::new();
         payload.extend((image_name.len() as u16).to_le_bytes());
@@ -1105,8 +1119,22 @@ async fn send_embedded_image(
         payload.extend(total_chunks.to_le_bytes());
         payload.extend((chunk.len() as u16).to_le_bytes());
         payload.extend(chunk);
+
+        // DIAGNOSTIC: Log each chunk being sent
+        println!(
+            "[SEND-IMAGE-CHUNK] {}/{}: name='{}' seq={} chunk_len={} payload_len={}",
+            idx + 1,
+            total_chunks,
+            image_name,
+            idx,
+            chunk.len(),
+            payload.len()
+        );
+
         send_tcp_response(stream.clone(), client_protocol::IMAGE_CHUNK, &payload).await?;
     }
+
+    println!("[SEND-IMAGE] ✅ Completed sending all {} chunks for '{}'", total_chunks, image_name);
     Ok(())
 }
 
