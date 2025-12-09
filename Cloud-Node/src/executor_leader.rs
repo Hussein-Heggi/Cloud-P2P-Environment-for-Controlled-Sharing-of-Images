@@ -4,7 +4,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::state::SharedState;
-use crate::firebase::{self, DosClient, DosAccess};
+use crate::firebase::{self, DosClient};
 
 // Message types for executor-leader communication
 pub const EXEC_ADD_CLIENT: u8 = 40;       // Executor → Leader: Add client to DOS-S
@@ -62,9 +62,7 @@ pub async fn run_executor_leader_channel(state: SharedState, cfg: Config) -> Res
             async move {
                 let result = match msg_type {
                     EXEC_ADD_CLIENT => handle_add_client(state, &data).await,
-                    EXEC_ADD_ACCESS => handle_add_access(state, &data).await,
-                    EXEC_UPDATE_ACCESS => handle_update_access(state, &data).await,
-                    EXEC_REVOKE_ACCESS => handle_revoke_access(state, &data).await,
+                    // REMOVED Phase 2: EXEC_ADD_ACCESS, EXEC_UPDATE_ACCESS, EXEC_REVOKE_ACCESS - Access map now managed locally by clients
                     EXEC_UPDATE_CLIENT_STATUS => handle_update_client_status(state, &data).await,
                     _ => {
                         debug!("Unknown executor-leader message type: {}", msg_type);
@@ -198,145 +196,29 @@ async fn handle_add_client(state: SharedState, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Handle ADD_ACCESS: Grant access to an image
-async fn handle_add_access(state: SharedState, data: &[u8]) -> Result<()> {
-    // Parse: [access_id_len:u16][access_id][owner_len:u16][owner][viewer_len:u16][viewer]
-    //        [image_name_len:u16][image_name][granted_views:u32][image_uuid_len:u16][image_uuid]
-    let mut offset = 0;
-
-    let access_id_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
-    offset += 2;
-    let access_id = String::from_utf8(data[offset..offset + access_id_len].to_vec())?;
-    offset += access_id_len;
-
-    let owner_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
-    offset += 2;
-    let owner = String::from_utf8(data[offset..offset + owner_len].to_vec())?;
-    offset += owner_len;
-
-    let viewer_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
-    offset += 2;
-    let viewer = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
-    offset += viewer_len;
-
-    let image_name_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
-    offset += 2;
-    let image_name = String::from_utf8(data[offset..offset + image_name_len].to_vec())?;
-    offset += image_name_len;
-
-    let granted_views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
-    offset += 4;
-
-    let image_uuid_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
-    offset += 2;
-    let image_uuid = String::from_utf8(data[offset..offset + image_uuid_len].to_vec())?;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis() as u64;
-
-    let access = DosAccess {
-        owner,
-        viewer,
-        image_name,
-        granted_views,
-        consumed_views: 0,
-        revoked: false,
-        granted_at: now,
-        image_uuid,
-    };
-
-    debug!("Leader writing access {} to Firebase", access_id);
-
-    // Write to Firebase
-    let s = state.read().await;
-    if let Some(db) = &s.firestore_db {
-        firebase::write_access(db, &access_id, &access).await?;
-    }
-    drop(s);
-
-    // Update local state
-    let mut s = state.write().await;
-    s.dos_access.insert(access_id.clone(), access);
-    drop(s);
-
-    info!("Access {} added to DOS-S", access_id);
-
-    Ok(())
+/// Handle ADD_ACCESS: Grant access to an image (DEPRECATED Phase 2 - removed)
+#[allow(dead_code)]
+async fn handle_add_access(_state: SharedState, _data: &[u8]) -> Result<()> {
+    // REMOVED Phase 2: Access map now managed locally by clients only
+    Err(anyhow::anyhow!("DEPRECATED: Server-side access management removed in Phase 2"))
 }
 
-/// Handle UPDATE_ACCESS: Update consumed views
-async fn handle_update_access(state: SharedState, data: &[u8]) -> Result<()> {
-    // Parse: [access_id_len:u16][access_id][consumed_views:u32]
-    let mut offset = 0;
-
-    let access_id_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
-    offset += 2;
-    let access_id = String::from_utf8(data[offset..offset + access_id_len].to_vec())?;
-    offset += access_id_len;
-
-    let consumed_views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
-
-    debug!("Leader updating access {} consumed views to {}", access_id, consumed_views);
-
-    // Clone firestore_db first
-    let db = {
-        let s = state.read().await;
-        s.firestore_db.clone()
-    };
-
-    // Update local state
-    let mut s = state.write().await;
-    if let Some(access) = s.dos_access.get_mut(&access_id) {
-        access.consumed_views = consumed_views;
-        let access_clone = access.clone();
-        drop(s);
-
-        // Write to Firebase
-        if let Some(db) = db {
-            firebase::write_access(&db, &access_id, &access_clone).await?;
-        }
-
-        info!("Access {} consumed views updated to {}", access_id, consumed_views);
-        Ok(())
-    } else {
-        drop(s);
-        Err(anyhow::anyhow!("Access record not found: {}", access_id))
-    }
+/// Handle UPDATE_ACCESS: Update consumed views (DEPRECATED Phase 2 - unused)
+#[allow(dead_code)]
+/// Handle UPDATE_ACCESS: Update consumed views (DEPRECATED Phase 2 - unused)
+#[allow(dead_code)]
+async fn handle_update_access(_state: SharedState, _data: &[u8]) -> Result<()> {
+    // REMOVED Phase 2: Access map now managed locally by clients only
+    Err(anyhow::anyhow!("DEPRECATED: Server-side access management removed in Phase 2"))
 }
 
-/// Handle REVOKE_ACCESS: Revoke access to an image
-async fn handle_revoke_access(state: SharedState, data: &[u8]) -> Result<()> {
-    // Parse: [access_id_len:u16][access_id]
-    let access_id_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
-    let access_id = String::from_utf8(data[2..2 + access_id_len].to_vec())?;
-
-    debug!("Leader revoking access {}", access_id);
-
-    // Clone firestore_db first
-    let db = {
-        let s = state.read().await;
-        s.firestore_db.clone()
-    };
-
-    // Update local state
-    let mut s = state.write().await;
-    if let Some(access) = s.dos_access.get_mut(&access_id) {
-        access.revoked = true;
-        let access_clone = access.clone();
-        drop(s);
-
-        // Write to Firebase
-        if let Some(db) = db {
-            firebase::write_access(&db, &access_id, &access_clone).await?;
-        }
-
-        info!("Access {} revoked", access_id);
-        Ok(())
-    } else {
-        drop(s);
-        Err(anyhow::anyhow!("Access record not found: {}", access_id))
-    }
+/// Handle REVOKE_ACCESS: Revoke access to an image (DEPRECATED Phase 2 - unused)
+#[allow(dead_code)]
+/// Handle REVOKE_ACCESS: Revoke access to an image (DEPRECATED Phase 2 - unused)
+#[allow(dead_code)]
+async fn handle_revoke_access(_state: SharedState, _data: &[u8]) -> Result<()> {
+    // REMOVED Phase 2: Access map now managed locally by clients only
+    Err(anyhow::anyhow!("DEPRECATED: Server-side access management removed in Phase 2"))
 }
 
 /// Handle UPDATE_CLIENT_STATUS: Update client online status in DOS-S

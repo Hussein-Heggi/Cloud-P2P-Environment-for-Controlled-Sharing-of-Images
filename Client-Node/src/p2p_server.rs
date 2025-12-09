@@ -123,6 +123,15 @@ async fn handle_peer_connection(
             protocol::PEER_VIEW_REQUEST => {
                 handle_peer_view_request(&mut stream, peer_addr, &payload, state.clone()).await?;
             }
+            protocol::PEER_VIEW_RESPONSE => {
+                handle_peer_view_response(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_IMAGE_CHUNK => {
+                handle_peer_image_chunk(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_VIEW_REJECTED => {
+                handle_peer_view_rejected(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
             protocol::PEER_ADJUST_REQUEST => {
                 handle_peer_adjust_request(&mut stream, peer_addr, &payload, state.clone()).await?;
             }
@@ -187,15 +196,79 @@ async fn handle_peer_view_request(
 
     let requested_views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
 
-    println!("[P2P_SERVER] PEER_VIEW_REQUEST: viewer={}, image={}, views={}",
+    println!("[P2P_SERVER] 📥 PEER_VIEW_REQUEST: viewer={}, image={}, views={}",
              viewer_name, image_name, requested_views);
 
-    // TODO: Check local_access_map for permissions
-    // TODO: If approved, encrypt image and send PEER_VIEW_RESPONSE
-    // TODO: If rejected, send PEER_VIEW_REJECTED
+    // Phase 3B: Store request in pending_view_requests for owner approval
+    // Generate unique request ID
+    let request_id = rand::random::<u32>();
 
-    // For now, send a simple ACK
+    // Get owner username
+    let owner_username = {
+        let s = state.read().await;
+        s.username.clone()
+    };
+
+    // Check if we own this image
+    let has_image = {
+        let s = state.read().await;
+        s.actual_images.contains(&image_name)
+    };
+
+    if !has_image {
+        println!("[P2P_SERVER] ❌ Image '{}' not found in our images", image_name);
+        // Send PEER_VIEW_REJECTED
+        let mut payload = Vec::new();
+        let reason = "Image not found";
+        payload.extend((reason.len() as u16).to_le_bytes());
+        payload.extend_from_slice(reason.as_bytes());
+        send_p2p_message(stream, protocol::PEER_VIEW_REJECTED, &payload).await?;
+        return Ok(());
+    }
+
+    // Store pending request in ClientState
+    {
+        use crate::owner::PendingViewRequest;
+
+        let mut s = state.write().await;
+        let pending_req = PendingViewRequest {
+            request_id,
+            viewer: viewer_name.clone(),
+            image_name: image_name.clone(),
+            requested_views,
+            peer_addr,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        };
+
+        s.pending_view_requests.insert(request_id, pending_req);
+
+        println!("[P2P_SERVER] 📝 Stored pending request: ID={}, viewer={}, image={}",
+                 request_id, viewer_name, image_name);
+    }
+
+    // Notify owner (console for now, UI in Phase 7)
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  📢 NEW VIEW REQUEST                                      ║");
+    println!("╠═══════════════════════════════════════════════════════════╣");
+    println!("║  Request ID: {}                                    ║", request_id);
+    println!("║  From:       {}                                          ║", viewer_name);
+    println!("║  Image:      {}                                         ║", image_name);
+    println!("║  Views:      {}                                              ║", requested_views);
+    println!("╠═══════════════════════════════════════════════════════════╣");
+    println!("║  Use CLI commands to approve/deny:                        ║");
+    println!("║    approve <request_id>                                   ║");
+    println!("║    deny <request_id>                                      ║");
+    println!("╚═══════════════════════════════════════════════════════════╝\n");
+
+    // Send acknowledgment (connection stays open for response)
+    // Note: Approval will be handled by Phase 3C: approve_peer_view_request()
     send_p2p_message(stream, protocol::PEER_ACK, &[]).await?;
+
+    // TODO Phase 3C: When owner approves, call approve_peer_view_request()
+    // TODO Phase 3C: When owner denies, send PEER_VIEW_REJECTED
 
     Ok(())
 }
@@ -238,6 +311,294 @@ pub async fn send_p2p_message(
 
     stream.write_all(&buf).await
         .context("Failed to send P2P message")?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Phase 3D: Viewer-Side Response Handlers
+// ============================================================================
+
+/// Handle PEER_VIEW_RESPONSE from owner (viewer side)
+/// Wire format: [image_name_len:u16][image_name][granted_views:u32]
+/// This is the first message in the approval flow, followed by PEER_IMAGE_CHUNK messages
+async fn handle_peer_view_response(
+    stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_VIEWER] 🔵 Received PEER_VIEW_RESPONSE from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("Invalid PEER_VIEW_RESPONSE: too short"));
+    }
+
+    let image_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+
+    if data.len() < offset + image_len {
+        return Err(anyhow::anyhow!("Invalid image name length"));
+    }
+
+    let image_name = String::from_utf8(data[offset..offset + image_len].to_vec())?;
+    offset += image_len;
+
+    // Parse granted views
+    if data.len() < offset + 4 {
+        return Err(anyhow::anyhow!("Invalid granted views"));
+    }
+
+    let granted_views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+
+    println!("[P2P_VIEWER] 📥 Approval received: image='{}', granted_views={}",
+             image_name, granted_views);
+
+    // Get owner username from peer_addr by looking up in DOS
+    // For now, we'll need to determine owner from the connection
+    // Since owner connected to us, we need to track this differently
+    // Let's extract owner from pending state or use a different approach
+
+    // For now, we'll use peer_addr to lookup owner in DOS
+    let owner = {
+        let s = state.read().await;
+        // Find owner by matching peer IP
+        let peer_ip = peer_addr.ip().to_string();
+
+        s.dos.clients.iter()
+            .find(|(_, client)| client.client_ip == peer_ip)
+            .map(|(username, _)| username.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine owner from peer_addr {}", peer_addr))?
+    };
+
+    println!("[P2P_VIEWER] Identified owner: {}", owner);
+
+    // Create pending download entry to track incoming chunks
+    let key = crate::simple_client::PendingImageDownload::make_key(&owner, &image_name);
+
+    {
+        use crate::simple_client::PendingImageDownload;
+
+        let mut s = state.write().await;
+        let pending = PendingImageDownload::new(owner.clone(), image_name.clone(), granted_views);
+        s.pending_downloads.insert(key.clone(), pending);
+
+        println!("[P2P_VIEWER] 📝 Created pending download: key={}", key);
+    }
+
+    println!("[P2P_VIEWER] ✅ Ready to receive image chunks");
+
+    Ok(())
+}
+
+/// Handle PEER_IMAGE_CHUNK from owner (viewer side)
+/// Wire format: [chunk_index:u32][total_chunks:u32][chunk_data]
+/// Reassembles chunks and saves to encrypted_storage when complete
+async fn handle_peer_image_chunk(
+    stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_VIEWER] 📦 Received PEER_IMAGE_CHUNK from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse chunk index
+    if data.len() < 4 {
+        return Err(anyhow::anyhow!("Invalid PEER_IMAGE_CHUNK: too short"));
+    }
+
+    let chunk_index = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+    offset += 4;
+
+    // Parse total chunks
+    if data.len() < offset + 4 {
+        return Err(anyhow::anyhow!("Invalid total chunks"));
+    }
+
+    let total_chunks = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+    offset += 4;
+
+    // Remaining data is the chunk
+    let chunk_data = data[offset..].to_vec();
+
+    println!("[P2P_VIEWER] 📦 Chunk {}/{} ({} bytes)",
+             chunk_index + 1, total_chunks, chunk_data.len());
+
+    // Find the pending download by matching peer_addr to owner
+    let owner_opt = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+
+        s.dos.clients.iter()
+            .find(|(_, client)| client.client_ip == peer_ip)
+            .map(|(username, _)| username.clone())
+    };
+
+    let owner = owner_opt.ok_or_else(|| anyhow::anyhow!("Cannot determine owner from peer_addr"))?;
+
+    // Store chunk in pending download
+    let mut is_complete = false;
+    let mut pending_opt: Option<crate::simple_client::PendingImageDownload> = None;
+
+    {
+        let mut s = state.write().await;
+
+        // Find the pending download for this owner (should only be one active at a time)
+        let key_opt = s.pending_downloads.keys()
+            .find(|k| k.starts_with(&format!("{}_", owner)))
+            .cloned();
+
+        if let Some(key) = key_opt {
+            if let Some(pending) = s.pending_downloads.get_mut(&key) {
+                // Set total chunks if not set
+                if pending.total_chunks.is_none() {
+                    pending.total_chunks = Some(total_chunks);
+                }
+
+                // Store chunk
+                pending.chunks.insert(chunk_index, chunk_data);
+
+                println!("[P2P_VIEWER] 📦 Stored chunk {} ({}/{} received)",
+                         chunk_index, pending.chunks.len(), total_chunks);
+
+                // Check if complete
+                if pending.is_complete() {
+                    is_complete = true;
+                    pending_opt = Some(pending.clone());
+                    println!("[P2P_VIEWER] ✅ All chunks received!");
+                }
+            }
+        } else {
+            return Err(anyhow::anyhow!("No pending download found for owner {}", owner));
+        }
+    }
+
+    // If complete, assemble and save image
+    if is_complete {
+        if let Some(pending) = pending_opt {
+            println!("[P2P_VIEWER] 🔧 Assembling image from {} chunks...", pending.chunks.len());
+
+            // Assemble chunks in order
+            let mut full_image = Vec::new();
+            for i in 0..total_chunks {
+                let chunk = pending.chunks.get(&i)
+                    .ok_or_else(|| anyhow::anyhow!("Missing chunk {}", i))?;
+                full_image.extend_from_slice(chunk);
+            }
+
+            println!("[P2P_VIEWER] 📦 Assembled image: {} bytes", full_image.len());
+
+            // Save to encrypted_storage/
+            let encrypted_dir = std::path::Path::new("encrypted_storage");
+            tokio::fs::create_dir_all(encrypted_dir).await?;
+
+            let filename = format!("{}.png", pending.image_name.trim_end_matches(".png"));
+            let file_path = encrypted_dir.join(&filename);
+
+            tokio::fs::write(&file_path, &full_image).await
+                .context("Failed to write encrypted image")?;
+
+            println!("[P2P_VIEWER] 💾 Saved encrypted image to {}", file_path.display());
+
+            // Add to ViewerAccessMap
+            {
+                use crate::viewer::ViewerAccessMap;
+
+                let mut s = state.write().await;
+
+                // Load existing map or create new
+                let map_path = ViewerAccessMap::default_path()?;
+                let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+                    .unwrap_or_else(|_| ViewerAccessMap::new());
+
+                // Add grant
+                let encrypted_path_str = file_path.to_string_lossy().to_string();
+                viewer_map.add_grant(
+                    &pending.owner,
+                    &pending.image_name,
+                    pending.granted_views,
+                    &encrypted_path_str,
+                );
+
+                // Save map
+                viewer_map.save_to_file(&map_path).await?;
+
+                println!("[P2P_VIEWER] 📝 Added to viewer_access_map: {} views remaining",
+                         pending.granted_views);
+
+                // Remove from pending downloads
+                let key = crate::simple_client::PendingImageDownload::make_key(
+                    &pending.owner, &pending.image_name);
+                s.pending_downloads.remove(&key);
+            }
+
+            println!("[P2P_VIEWER] ✅ Download complete! Image ready to view ({} times)",
+                     pending.granted_views);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle PEER_VIEW_REJECTED from owner (viewer side)
+/// Wire format: [reason_len:u16][reason]
+async fn handle_peer_view_rejected(
+    stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_VIEWER] ❌ Received PEER_VIEW_REJECTED from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse rejection reason
+    if data.len() < 2 {
+        return Err(anyhow::anyhow!("Invalid PEER_VIEW_REJECTED: too short"));
+    }
+
+    let reason_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+
+    if data.len() < offset + reason_len {
+        return Err(anyhow::anyhow!("Invalid reason length"));
+    }
+
+    let reason = String::from_utf8(data[offset..offset + reason_len].to_vec())?;
+
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  ❌ VIEW REQUEST REJECTED                                 ║");
+    println!("╠═══════════════════════════════════════════════════════════╣");
+    println!("║  From:   {}                                               ║", peer_addr);
+    println!("║  Reason: {}                                               ║", reason);
+    println!("╚═══════════════════════════════════════════════════════════╝\n");
+
+    // Clean up any pending state for this peer if exists
+    {
+        let mut s = state.write().await;
+        let peer_ip = peer_addr.ip().to_string();
+
+        // Find owner from peer_addr
+        if let Some((owner, _)) = s.dos.clients.iter()
+            .find(|(_, client)| client.client_ip == peer_ip) {
+
+            // Remove any pending downloads from this owner
+            let keys_to_remove: Vec<String> = s.pending_downloads.keys()
+                .filter(|k| k.starts_with(&format!("{}_", owner)))
+                .cloned()
+                .collect();
+
+            for key in keys_to_remove {
+                s.pending_downloads.remove(&key);
+                println!("[P2P_VIEWER] 🗑️  Removed pending download: {}", key);
+            }
+        }
+    }
 
     Ok(())
 }

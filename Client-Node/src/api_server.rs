@@ -342,6 +342,148 @@ async fn extract_image(
 }
 
 // ============================================================================
+// Phase 4C: Secure Image Viewing with Count Decrement
+// ============================================================================
+
+/// GET /api/view/:owner/:image_name - View an encrypted image (with view count decrement)
+/// CRITICAL: Decrypts in memory, decrements count, returns image, NEVER saves decrypted version
+async fn view_image(
+    State(api_state): State<ApiState>,
+    Path((owner, image_name)): Path<(String, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    use crate::viewer::ViewerAccessMap;
+    use std::path::PathBuf;
+
+    println!("[VIEW] 🔍 Request to view: owner={}, image={}", owner, image_name);
+
+    // Load ViewerAccessMap
+    let map_path = ViewerAccessMap::default_path()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get map path: {}", e)))?;
+
+    let mut viewer_map = ViewerAccessMap::load_from_file(&map_path)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load viewer map: {}", e)))?;
+
+    // Check remaining views
+    let remaining_views = viewer_map.get_remaining_views(&owner, &image_name);
+    println!("[VIEW] Remaining views: {}", remaining_views);
+
+    if remaining_views == 0 {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("No remaining views for image '{}' from owner '{}'", image_name, owner)
+        ));
+    }
+
+    // Get encrypted image path from grant
+    let grant = viewer_map.get_grant(&owner, &image_name)
+        .ok_or_else(|| (
+            StatusCode::NOT_FOUND,
+            format!("No access grant found for image '{}' from owner '{}'", image_name, owner)
+        ))?;
+
+    let encrypted_path = PathBuf::from(&grant.encrypted_path);
+
+    println!("[VIEW] 📦 Reading encrypted image from: {}", encrypted_path.display());
+
+    // Check if encrypted file exists
+    if !tokio::fs::metadata(&encrypted_path).await.is_ok() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Encrypted image not found at: {}", encrypted_path.display())
+        ));
+    }
+
+    // Read encrypted PNG
+    let encrypted_bytes = tokio::fs::read(&encrypted_path)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read encrypted image: {}", e)))?;
+
+    println!("[VIEW] 📦 Loaded encrypted image: {} bytes", encrypted_bytes.len());
+
+    // Load image and extract true image using stego
+    println!("[VIEW] 🔓 Decrypting image in memory...");
+
+    let embedded_img = image::load_from_memory(&encrypted_bytes)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load image: {}", e)))?;
+
+    let (true_img, metadata) = stego::extract(&embedded_img)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to extract from stego: {}", e)))?;
+
+    println!("[VIEW] ✅ Decrypted successfully!");
+    println!("[VIEW] Metadata: owner={}, image={}", metadata.owner, metadata.image_name);
+
+    // Decrement view count BEFORE returning image
+    if !viewer_map.decrement_view(&owner, &image_name) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to decrement view count".to_string()
+        ));
+    }
+
+    // Save updated ViewerAccessMap
+    viewer_map.save_to_file(&map_path)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save viewer map: {}", e)))?;
+
+    let new_remaining = viewer_map.get_remaining_views(&owner, &image_name);
+    println!("[VIEW] 📉 View count decremented: {} → {} remaining", remaining_views, new_remaining);
+
+    // Convert image to PNG bytes in memory
+    let mut png_bytes: Vec<u8> = Vec::new();
+    true_img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to encode PNG: {}", e)))?;
+
+    println!("[VIEW] 🖼️  Returning decrypted image ({} bytes, {} views remaining)", png_bytes.len(), new_remaining);
+
+    // Return image as PNG with appropriate headers
+    use axum::response::Response;
+    use axum::body::Body;
+    use axum::http::header::{CONTENT_TYPE, CACHE_CONTROL};
+
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "image/png")
+        .header("X-Remaining-Views", new_remaining.to_string())
+        .header(CACHE_CONTROL, "no-store, must-revalidate")
+        .body(Body::from(png_bytes))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to build response: {}", e)))?;
+
+    Ok(response)
+}
+
+/// GET /api/viewer-access-map - Get viewer's access map (for UI display)
+async fn get_viewer_access_map(
+    State(api_state): State<ApiState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    use crate::viewer::ViewerAccessMap;
+
+    let map_path = ViewerAccessMap::default_path()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get map path: {}", e)))?;
+
+    let viewer_map = ViewerAccessMap::load_from_file(&map_path)
+        .await
+        .unwrap_or_else(|_| ViewerAccessMap::new());
+
+    // Convert to JSON for API response
+    let available_grants: Vec<serde_json::Value> = viewer_map.list_available()
+        .iter()
+        .map(|grant| serde_json::json!({
+            "owner": grant.owner,
+            "image_name": grant.image_name,
+            "remaining_views": grant.remaining_views,
+            "received_at": grant.received_at,
+            "encrypted_path": grant.encrypted_path,
+        }))
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "grants": available_grants,
+        "total_available": available_grants.len(),
+    })))
+}
+
+// ============================================================================
 // Server Setup
 // ============================================================================
 
@@ -373,6 +515,9 @@ pub async fn run_api_server(
         .route("/api/requests", get(get_requests))
         .route("/api/downloads", get(get_downloads))
         .route("/api/extract/:filename", post(extract_image))
+        // Phase 4C: Secure viewing with count decrement
+        .route("/api/view/:owner/:image_name", get(view_image))
+        .route("/api/viewer-access-map", get(get_viewer_access_map))
         // Owner operations
         .route("/api/notifications", get(get_notifications))
         .route("/api/approve/:request_id", post(approve_request))

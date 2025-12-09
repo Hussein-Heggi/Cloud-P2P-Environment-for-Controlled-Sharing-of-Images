@@ -22,6 +22,42 @@ use crate::local_access_map::LocalAccessMap;
 /// Fixed client listen/advertised port for TCP (starting port for P2P range)
 pub const CLIENT_PORT: u16 = 9080;
 
+/// Pending P2P image download (viewer side)
+#[derive(Debug, Clone)]
+pub struct PendingImageDownload {
+    pub owner: String,
+    pub image_name: String,
+    pub granted_views: u32,
+    pub chunks: HashMap<u32, Vec<u8>>,
+    pub total_chunks: Option<u32>,
+}
+
+impl PendingImageDownload {
+    pub fn new(owner: String, image_name: String, granted_views: u32) -> Self {
+        Self {
+            owner,
+            image_name,
+            granted_views,
+            chunks: HashMap::new(),
+            total_chunks: None,
+        }
+    }
+
+    /// Check if all chunks have been received
+    pub fn is_complete(&self) -> bool {
+        if let Some(total) = self.total_chunks {
+            self.chunks.len() == total as usize
+        } else {
+            false
+        }
+    }
+
+    /// Get key for HashMap lookup
+    pub fn make_key(owner: &str, image_name: &str) -> String {
+        format!("{}_{}", owner, image_name)
+    }
+}
+
 /// Client state
 #[derive(Clone)]
 pub struct ClientState {
@@ -45,6 +81,9 @@ pub struct ClientState {
     pub downloads: Vec<DownloadedImage>,
     /// NEW P2P: Local access map for owner permissions
     pub local_access_map: LocalAccessMap,
+    /// NEW P2P Phase 3D: Track in-progress P2P image downloads (viewer side)
+    /// Key: "owner_imagename"
+    pub pending_downloads: HashMap<String, PendingImageDownload>,
 }
 
 impl ClientState {
@@ -63,6 +102,7 @@ impl ClientState {
             pending_view_requests: HashMap::new(),
             downloads: Vec::new(),
             local_access_map: LocalAccessMap::new(),
+            pending_downloads: HashMap::new(),
         }
     }
 
@@ -353,6 +393,52 @@ pub async fn ping_loop(
     }
 }
 
+/// Update encrypted image index file
+/// Maintains a JSON index of all encrypted images received from server
+async fn update_encrypted_image_index(
+    image_name: &str,
+    path: &str,
+    size_bytes: usize,
+) -> Result<()> {
+    use serde::{Serialize, Deserialize};
+    use std::collections::HashMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct ImageIndexEntry {
+        path: String,
+        uploaded_at: u64,
+        size_bytes: usize,
+    }
+
+    let index_path = "encrypted_storage/encrypted_image_index.json";
+
+    // Load existing index or create new
+    let mut index: HashMap<String, ImageIndexEntry> = if tokio::fs::metadata(index_path).await.is_ok() {
+        let content = tokio::fs::read_to_string(index_path).await?;
+        serde_json::from_str(&content).unwrap_or_else(|_| HashMap::new())
+    } else {
+        HashMap::new()
+    };
+
+    // Add/update entry
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+
+    index.insert(image_name.to_string(), ImageIndexEntry {
+        path: path.to_string(),
+        uploaded_at: now,
+        size_bytes,
+    });
+
+    // Save back to file
+    let json = serde_json::to_string_pretty(&index)?;
+    tokio::fs::write(index_path, json).await?;
+
+    println!("[INDEX] Updated encrypted image index: {} ({} bytes)", image_name, size_bytes);
+    Ok(())
+}
+
 /// Run the client listener (receives messages from server)
 pub async fn run_listener(
     state: SharedClientState,
@@ -513,6 +599,7 @@ pub async fn run_listener(
                     viewer: viewer_name.clone(),
                     image_name: image_name.clone(),
                     requested_views,
+                    peer_addr: "0.0.0.0:0".parse().unwrap(),  // DEPRECATED: Old server-mediated flow
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -526,6 +613,95 @@ pub async fn run_listener(
 
                 println!("[OWNER] Stored pending request in state");
                 println!("   💡 View pending requests via web UI at http://localhost:3000/dashboard");
+            }
+
+            PENDING_REQUEST => {
+                // Phase 5B: Handle offline request delivery from server
+                // Wire format: same as VIEW_NOTIFICATION
+                // [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name][req_id:u32][requested_views:u32]
+                println!("[OWNER] 📬 PENDING_REQUEST received (offline request delivery)");
+
+                let mut offset = 0;
+
+                if data.len() < offset + 2 {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: too short");
+                    continue;
+                }
+
+                let viewer_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                offset += 2;
+
+                if data.len() < offset + viewer_len {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: invalid viewer name length");
+                    continue;
+                }
+
+                let viewer_name = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
+                offset += viewer_len;
+
+                if data.len() < offset + 2 {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no image name length");
+                    continue;
+                }
+
+                let image_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                offset += 2;
+
+                if data.len() < offset + image_len {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: invalid image name length");
+                    continue;
+                }
+
+                let image_name = String::from_utf8(data[offset..offset + image_len].to_vec())?;
+                offset += image_len;
+
+                if data.len() < offset + 4 {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no request ID");
+                    continue;
+                }
+
+                let req_id = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+                offset += 4;
+
+                let requested_views = if data.len() >= offset + 4 {
+                    u32::from_le_bytes(data[offset..offset + 4].try_into()?)
+                } else {
+                    0
+                };
+
+                println!("\n╔═══════════════════════════════════════════════════════════╗");
+                println!("║  📬 OFFLINE REQUEST DELIVERED BY SERVER                  ║");
+                println!("╠═══════════════════════════════════════════════════════════╣");
+                println!("║  Request ID: {}                                    ║", req_id);
+                println!("║  From:       {}                                          ║", viewer_name);
+                println!("║  Image:      {}                                         ║", image_name);
+                println!("║  Views:      {}                                              ║", requested_views);
+                println!("╠═══════════════════════════════════════════════════════════╣");
+                println!("║  This request was made while you were offline.            ║");
+                println!("║  Use CLI commands to approve/deny:                        ║");
+                println!("║    approve_p2p <request_id>                               ║");
+                println!("║    deny_p2p <request_id>                                  ║");
+                println!("╚═══════════════════════════════════════════════════════════╝\n");
+
+                // Store in pending requests
+                let pending_req = crate::owner::PendingViewRequest {
+                    request_id: req_id,
+                    viewer: viewer_name.clone(),
+                    image_name: image_name.clone(),
+                    requested_views,
+                    peer_addr: "0.0.0.0:0".parse().unwrap(),  // Server-mediated, no peer addr
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                };
+
+                {
+                    let mut s = state.write().await;
+                    s.pending_view_requests.insert(req_id, pending_req);
+                }
+
+                println!("[OWNER] Stored offline request in pending queue");
             }
 
             DOS_UPDATE => {
@@ -646,13 +822,16 @@ pub async fn run_listener(
                         }
                     }
 
-                    // Save to encrypted_images directory
-                    let dir = "encrypted_images";
+                    // Save to encrypted_storage directory (Phase 0: Reorganization)
+                    let dir = "encrypted_storage";
                     if let Err(e) = tokio::fs::create_dir_all(dir).await {
                         println!("[CLIENT-LISTENER] Failed to create dir {}: {}", dir, e);
                     }
 
-                    let path = format!("{}/{}_encrypted.png", dir, name);
+                    // Remove _encrypted suffix - use clean name
+                    let clean_name = name.trim_end_matches("_encrypted");
+                    let path = format!("{}/{}.png", dir, clean_name);
+
                     match tokio::fs::write(&path, &assembled).await {
                         Ok(_) => {
                             println!(
@@ -676,6 +855,11 @@ pub async fn run_listener(
                             println!(
                                 "╚════════════════════════════════════════════════════════════════╝"
                             );
+
+                            // Update encrypted image index
+                            if let Err(e) = update_encrypted_image_index(clean_name, &path, assembled.len()).await {
+                                println!("[CLIENT-LISTENER] ⚠️  Failed to update index: {}", e);
+                            }
                         },
                         Err(e) => println!("[CLIENT-LISTENER] ❌ Failed to write image {}: {}", path, e),
                     }

@@ -402,11 +402,29 @@ async fn run_interactive_mode(
    println!("📱 HTTP API: http://localhost:3001");
    println!("🌐 Web UI: http://localhost:3000 (run 'npm run dev' in Client-Node/web-ui/)");
    println!();
+   println!("💬 Owner Commands (type in terminal):");
+   println!("   list              - Show all pending P2P view requests");
+   println!("   approve <req_id>  - Approve a P2P view request");
+   println!("   deny <req_id>     - Deny a P2P view request");
+   println!("   help              - Show this help");
+   println!();
    println!("Press Ctrl+C to exit.");
 
 
+   // Start command handler for owner operations
+   let cmd_task = {
+       let state_clone = state.clone();
+       tokio::spawn(async move {
+           if let Err(e) = handle_owner_commands(state_clone).await {
+               eprintln!("[CMD-HANDLER] Error: {}", e);
+           }
+       })
+   };
+
    // Wait for Ctrl+C
    tokio::signal::ctrl_c().await?;
+
+   cmd_task.abort();
 
 
    println!("\n[CLIENT] Shutting down...");
@@ -575,11 +593,29 @@ async fn run_interactive_upload_mode(
    println!("📱 HTTP API: http://localhost:3001");
    println!("🌐 Web UI: http://localhost:3000 (run 'npm run dev' in Client-Node/web-ui/)");
    println!();
+   println!("💬 Owner Commands (type in terminal):");
+   println!("   list              - Show all pending P2P view requests");
+   println!("   approve <req_id>  - Approve a P2P view request");
+   println!("   deny <req_id>     - Deny a P2P view request");
+   println!("   help              - Show this help");
+   println!();
    println!("Press Ctrl+C to exit.");
 
 
+   // Start command handler for owner operations
+   let cmd_task = {
+       let state_clone = state.clone();
+       tokio::spawn(async move {
+           if let Err(e) = handle_owner_commands(state_clone).await {
+               eprintln!("[CMD-HANDLER] Error: {}", e);
+           }
+       })
+   };
+
    // Wait for Ctrl+C
    tokio::signal::ctrl_c().await?;
+
+   cmd_task.abort();
 
 
    println!("\n[CLIENT] Shutting down...");
@@ -604,6 +640,138 @@ async fn run_interactive_upload_mode(
    Ok(())
 }
 
+
+/// Handle owner commands in interactive mode
+async fn handle_owner_commands(state: SharedClientState) -> Result<()> {
+   use tokio::io::{AsyncBufReadExt, BufReader};
+
+   let stdin = tokio::io::stdin();
+   let mut reader = BufReader::new(stdin);
+   let mut line = String::new();
+
+   loop {
+       line.clear();
+
+       let bytes_read = reader.read_line(&mut line).await?;
+       if bytes_read == 0 {
+           // EOF reached
+           break;
+       }
+
+       let input = line.trim();
+       if input.is_empty() {
+           continue;
+       }
+
+       let parts: Vec<&str> = input.split_whitespace().collect();
+       if parts.is_empty() {
+           continue;
+       }
+
+       match parts[0] {
+           "list" => {
+               let s = state.read().await;
+               if s.pending_view_requests.is_empty() {
+                   println!("\n📭 No pending P2P view requests");
+               } else {
+                   println!("\n📬 Pending P2P View Requests:");
+                   println!("┌─────────────┬──────────────┬──────────────────┬───────────────┐");
+                   println!("│ Request ID  │ Viewer       │ Image            │ Requested     │");
+                   println!("├─────────────┼──────────────┼──────────────────┼───────────────┤");
+
+                   for (req_id, req) in s.pending_view_requests.iter() {
+                       println!("│ {:11} │ {:12} │ {:16} │ {:13} │",
+                           req_id,
+                           req.viewer,
+                           req.image_name,
+                           format!("{} views", req.requested_views)
+                       );
+                   }
+
+                   println!("└─────────────┴──────────────┴──────────────────┴───────────────┘");
+               }
+               println!();
+           }
+
+           "approve" => {
+               if parts.len() < 2 {
+                   println!("❌ Usage: approve <request_id>");
+                   continue;
+               }
+
+               match parts[1].parse::<u32>() {
+                   Ok(req_id) => {
+                       // Check if request exists
+                       let exists = {
+                           let s = state.read().await;
+                           s.pending_view_requests.contains_key(&req_id)
+                       };
+
+                       if !exists {
+                           println!("❌ Request ID {} not found", req_id);
+                           continue;
+                       }
+
+                       println!("⏳ Approving request {}...", req_id);
+                       match owner::approve_peer_view_request(state.clone(), req_id).await {
+                           Ok(_) => println!("✅ Request {} approved successfully!", req_id),
+                           Err(e) => println!("❌ Failed to approve request {}: {}", req_id, e),
+                       }
+                   }
+                   Err(_) => {
+                       println!("❌ Invalid request ID: {}", parts[1]);
+                   }
+               }
+           }
+
+           "deny" => {
+               if parts.len() < 2 {
+                   println!("❌ Usage: deny <request_id>");
+                   continue;
+               }
+
+               match parts[1].parse::<u32>() {
+                   Ok(req_id) => {
+                       // Check if request exists
+                       let exists = {
+                           let s = state.read().await;
+                           s.pending_view_requests.contains_key(&req_id)
+                       };
+
+                       if !exists {
+                           println!("❌ Request ID {} not found", req_id);
+                           continue;
+                       }
+
+                       println!("⏳ Denying request {}...", req_id);
+                       match owner::deny_peer_view_request(state.clone(), req_id).await {
+                           Ok(_) => println!("✅ Request {} denied", req_id),
+                           Err(e) => println!("❌ Failed to deny request {}: {}", req_id, e),
+                       }
+                   }
+                   Err(_) => {
+                       println!("❌ Invalid request ID: {}", parts[1]);
+                   }
+               }
+           }
+
+           "help" => {
+               println!("\n💬 Owner Commands:");
+               println!("   list              - Show all pending P2P view requests");
+               println!("   approve <req_id>  - Approve a P2P view request");
+               println!("   deny <req_id>     - Deny a P2P view request");
+               println!("   help              - Show this help");
+               println!();
+           }
+
+           _ => {
+               println!("❌ Unknown command: '{}'. Type 'help' for available commands.", parts[0]);
+           }
+       }
+   }
+
+   Ok(())
+}
 
 fn print_usage() {
    println!("Simple Client - Test the new protocol (TCP)");

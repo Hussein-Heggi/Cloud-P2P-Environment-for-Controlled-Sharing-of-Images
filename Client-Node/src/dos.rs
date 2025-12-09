@@ -4,9 +4,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// DOS Client entry - P2P v3.0 format (name + IP + port + actual_images)
+/// DOS Client entry - P2P v3.0 format (name + IP + port + online + actual_images)
 /// NEW: Includes IP and port for direct P2P connections
-/// Excludes: last_seen, online (kept server-side only in DOS-S)
+/// NEW Phase 1: Added online status for owner availability detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DosClient {
     pub client_name: String,
@@ -14,6 +14,8 @@ pub struct DosClient {
     pub client_ip: String,
     /// NEW P2P: Client listen port for P2P requests
     pub client_port: u16,
+    /// NEW Phase 1: Online status (true = online, false = offline)
+    pub online: bool,
     /// Actual images only (no cover image)
     pub images: Vec<String>,
 }
@@ -156,6 +158,14 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
         let client_port = u16::from_le_bytes(payload[offset..offset + 2].try_into()?);
         offset += 2;
 
+        // NEW Phase 1: Parse online status
+        if offset + 1 > payload.len() {
+            return Err(anyhow::anyhow!("Unexpected end at online flag for client {}", i));
+        }
+
+        let online = payload[offset] != 0;  // 0=offline, 1=online
+        offset += 1;
+
         // Parse number of images (actual images only, no cover)
         if offset + 4 > payload.len() {
             return Err(anyhow::anyhow!("Unexpected end at num_images for client {}", i));
@@ -187,11 +197,13 @@ pub fn parse_dos_c_from_join_ack(payload: &[u8]) -> anyhow::Result<(HashMap<Stri
             client_name: client_name.clone(),
             client_ip: client_ip.clone(),
             client_port,
+            online,
             images,
         };
 
-        println!("[DOS] Parsed client: {} ({}:{}, {} actual images)",
-                 client_name, client_ip, client_port, dos_client.images.len());
+        let status = if online { "🟢 online" } else { "🔴 offline" };
+        println!("[DOS] Parsed client: {} ({}:{}, {}, {} actual images)",
+                 client_name, client_ip, client_port, status, dos_client.images.len());
 
         clients.insert(client_name, dos_client);
     }
@@ -216,6 +228,7 @@ mod tests {
                 client_name: "alice".to_string(),
                 client_ip: "192.168.1.100".to_string(),
                 client_port: 9080,
+                online: true,
                 images: vec!["secret.png".to_string(), "photo.jpg".to_string()],
             },
         );

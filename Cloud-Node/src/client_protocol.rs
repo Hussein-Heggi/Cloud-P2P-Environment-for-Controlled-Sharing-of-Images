@@ -547,9 +547,16 @@ pub async fn handle_sync_usage(
 
     let consumed_offline = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
 
-    info!("SYNC_USAGE: {} consumed {} views offline", image_uuid, consumed_offline);
+    info!("SYNC_USAGE (DEPRECATED Phase 2): {} consumed {} views offline", image_uuid, consumed_offline);
 
-    // Find access record by image_uuid
+    // REMOVED Phase 2: Access map now managed locally by clients only
+    // Send ACK to maintain protocol compatibility
+    let mut resp = vec![SYNC_ACK];
+    resp.extend(req_id.to_le_bytes());
+    sock.send_to(&resp, client_addr).await?;
+    return Ok(());
+
+    /* OLD CODE - REMOVED:
     let s = state.read().await;
     let access_entry = s.dos_access.iter()
         .find(|(_, access)| access.image_uuid == image_uuid)
@@ -606,6 +613,7 @@ pub async fn handle_sync_usage(
     info!("Synced {} offline views for {}", consumed_offline, image_uuid);
 
     Ok(())
+    */  // END OLD CODE
 }
 
 /// Helper: Generate access_id from owner, viewer, image_name

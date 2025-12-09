@@ -19,7 +19,6 @@ mod stego_service;
 mod tcp_client;
 mod udp;
 mod owner_image;
-mod access_map_storage;
 
 use crate::state::ServerState;
 
@@ -74,20 +73,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                let s = state.read().await;
-                if let Some(db) = &s.firestore_db {
-                    match firebase::read_all_access(db).await {
-                        Ok(access) => {
-                            drop(s);
-                            let mut s = state.write().await;
-                            s.dos_access = access;
-                            println!("[MAIN] ✅ Loaded {} access records from Firebase", s.dos_access.len());
-                        }
-                        Err(e) => {
-                            println!("[MAIN] ⚠️  Failed to load access records from Firebase: {}", e);
-                        }
-                    }
-                }
+                // REMOVED Phase 2: Access map loading - Now managed locally by clients only
             } else {
                 drop(s);
             }
@@ -457,18 +443,7 @@ async fn main() -> anyhow::Result<()> {
                     (s.is_leader, s.firestore_db.clone())
                 };
 
-                if is_leader {
-                    if let Some(db) = db {
-                        println!("[FIREBASE-CLEANUP] Running cleanup of expired access records...");
-
-                        if let Err(e) = firebase::cleanup_expired_access(&db, st.clone()).await {
-                            println!("[FIREBASE-CLEANUP] ⚠️  Cleanup error: {}", e);
-                            info!(error=%e, "Firebase cleanup error");
-                        } else {
-                            println!("[FIREBASE-CLEANUP] ✅ Cleanup completed");
-                        }
-                    }
-                }
+                // REMOVED Phase 2: cleanup_expired_access - Access map now managed locally by clients only
             }
         });
     }

@@ -3,7 +3,7 @@ use tokio::sync::RwLock;
 use firestore::FirestoreDb;
 use serde::{Deserialize, Serialize};
 
-use crate::firebase::{DosClient, DosAccess};
+use crate::firebase::DosClient;
 
 /// History table record for fault tolerance and deduplication
 #[derive(Clone, Debug)]
@@ -82,8 +82,8 @@ pub struct ServerState {
 
     // ---- DOS-S Local Copy (synchronized from Firebase) ----
     pub dos_clients: HashMap<String, DosClient>,  // username -> client info
-    pub dos_access: HashMap<String, DosAccess>,   // access_id -> access record
     pub dos_c_version: u32,                        // Incremented on DOS changes
+    // REMOVED Phase 2: dos_access field - Access map now managed locally by clients only
 
     // ---- TCP Connection Registry ----
     pub client_connections: HashMap<String, Arc<tokio::sync::Mutex<tokio::net::TcpStream>>>, // username -> active TCP connection
@@ -116,7 +116,6 @@ impl Default for ServerState {
             requests_served: 0,
             firestore_db: None,
             dos_clients: HashMap::new(),
-            dos_access: HashMap::new(),
             dos_c_version: 0,
             client_connections: HashMap::new(),
             owner_images: HashMap::new(),
@@ -143,7 +142,6 @@ impl ServerState {
             requests_served: 0,
             firestore_db: None,
             dos_clients: HashMap::new(),
-            dos_access: HashMap::new(),
             dos_c_version: 0,
             client_connections: HashMap::new(),
             owner_images: HashMap::new(),

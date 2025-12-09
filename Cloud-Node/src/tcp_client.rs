@@ -260,11 +260,6 @@ async fn route_client_message(
             handle_offline_requests_query(state, stream, peer_addr, payload).await
         }
 
-        x if x == client_protocol::ACCESS_MAP_QUERY => {
-            info!(%peer_addr, len=payload.len(), "Received ACCESS_MAP_QUERY from client");
-            handle_access_map_query(state, stream, peer_addr, payload).await
-        }
-
         x if x == client_protocol::REQUEST_EXECUTOR => {
             info!(%peer_addr, len=payload.len(), "Received REQUEST_EXECUTOR from client");
             handle_request_executor(state, &cfg, stream, peer_addr).await
@@ -457,7 +452,7 @@ async fn handle_join_tcp(
         println!("[HANDLE_JOIN_TCP] Building P2P DOS-C v3.0: version={}, num_clients={} (excluded: {})",
                  dos_version_u64, num_clients, username);
 
-        // For each client (P2P FORMAT: name + IP + port + actual_images)
+        // For each client (P2P FORMAT: name + IP + port + online + actual_images)
         for (client_name, client) in clients_to_send {
             // Username
             let name_bytes = client_name.as_bytes();
@@ -472,6 +467,9 @@ async fn handle_join_tcp(
             // NEW P2P: Client port (P2P listen port)
             payload.extend(client.client_port.to_le_bytes());
 
+            // NEW Phase 1: Online status (1 byte: 0=offline, 1=online)
+            payload.push(if client.online { 1 } else { 0 });
+
             // Number of images (u32) - ONLY actual images (no cover)
             payload.extend((client.actual_images.len() as u32).to_le_bytes());
 
@@ -482,8 +480,9 @@ async fn handle_join_tcp(
                 payload.extend_from_slice(img_bytes);
             }
 
-            println!("[HANDLE_JOIN_TCP]   ✅ {} -> ip={}, port={}, actual_images={:?}",
-                client_name, client.client_ip, client.client_port, client.actual_images);
+            let status = if client.online { "🟢 online" } else { "🔴 offline" };
+            println!("[HANDLE_JOIN_TCP]   ✅ {} -> ip={}, port={}, {}, actual_images={:?}",
+                client_name, client.client_ip, client.client_port, status, client.actual_images);
         }
 
         payload
@@ -640,7 +639,7 @@ async fn handle_dos_query_tcp(
         println!("[DOS_QUERY] Building P2P DOS-C v3.0: version={}, num_clients={} (excluded: {})",
                  dos_version_u64, num_clients, username);
 
-        // For each client (P2P FORMAT: name + IP + port + actual_images)
+        // For each client (P2P FORMAT: name + IP + port + online + actual_images)
         for (client_name, client) in clients_to_send {
             // Username
             let name_bytes = client_name.as_bytes();
@@ -655,6 +654,9 @@ async fn handle_dos_query_tcp(
             // NEW P2P: Client port (P2P listen port)
             payload.extend(client.client_port.to_le_bytes());
 
+            // NEW Phase 1: Online status (1 byte: 0=offline, 1=online)
+            payload.push(if client.online { 1 } else { 0 });
+
             // Number of images (u32) - ONLY actual images (no cover)
             payload.extend((client.actual_images.len() as u32).to_le_bytes());
 
@@ -665,8 +667,9 @@ async fn handle_dos_query_tcp(
                 payload.extend_from_slice(img_bytes);
             }
 
-            println!("[DOS_QUERY]   ✅ {} -> ip={}, port={}, actual_images={:?}",
-                client_name, client.client_ip, client.client_port, client.actual_images);
+            let status = if client.online { "🟢 online" } else { "🔴 offline" };
+            println!("[DOS_QUERY]   ✅ {} -> ip={}, port={}, {}, actual_images={:?}",
+                client_name, client.client_ip, client.client_port, status, client.actual_images);
         }
 
         payload
@@ -838,47 +841,7 @@ async fn handle_offline_requests_query(
     Ok(())
 }
 
-/// Handle ACCESS_MAP_QUERY: Client requests access map on startup
-async fn handle_access_map_query(
-    _state: SharedState,
-    stream: Arc<tokio::sync::Mutex<TcpStream>>,
-    peer_addr: SocketAddr,
-    data: &[u8],
-) -> Result<()> {
-    // Parse username
-    if data.len() < 2 {
-        return Err(anyhow::anyhow!("ACCESS_MAP_QUERY too short"));
-    }
-
-    let username_len = u16::from_le_bytes(data[0..2].try_into()?) as usize;
-    if data.len() < 2 + username_len {
-        return Err(anyhow::anyhow!("Invalid username length"));
-    }
-
-    let username = String::from_utf8(data[2..2 + username_len].to_vec())?;
-
-    println!("[ACCESS_MAP_QUERY] Request from user: {} ({})", username, peer_addr);
-
-    // Load access map from filesystem
-    let access_map = crate::access_map_storage::load_access_map(&username).await?;
-
-    println!("[ACCESS_MAP_QUERY] Loaded {} grants for {}", access_map.grants.len(), username);
-
-    // Serialize access map to JSON
-    let json = serde_json::to_vec(&access_map)?;
-
-    // Build response payload: [json_len:u32][json]
-    let mut payload = Vec::new();
-    payload.extend((json.len() as u32).to_le_bytes());
-    payload.extend(&json);
-
-    // Send response
-    send_tcp_response(stream, client_protocol::ACCESS_MAP_RESPONSE, &payload).await?;
-
-    println!("[ACCESS_MAP_QUERY] Sent {} grants to {}", access_map.grants.len(), username);
-    Ok(())
-}
-
+// REMOVED Phase 2: handle_access_map_query - Access map now managed locally by clients only
 // REMOVED: Old server-mediated view request handlers (replaced by P2P architecture)
 // - handle_view_request_tcp: Server no longer forwards VIEW_REQUEST
 // - handle_deny_view_tcp: Clients handle denials directly via P2P
@@ -1326,6 +1289,9 @@ fn build_dos_payload_from_firebase(
 
         // Client port
         payload.extend(client.client_port.to_le_bytes());
+
+        // NEW Phase 1: Online status (1 byte: 0=offline, 1=online)
+        payload.push(if client.online { 1 } else { 0 });
 
         // Actual images (no cover images in unified DOS)
         payload.extend((client.actual_images.len() as u32).to_le_bytes());
