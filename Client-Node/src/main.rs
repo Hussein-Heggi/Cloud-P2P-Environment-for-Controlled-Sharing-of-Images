@@ -8,6 +8,7 @@ use anyhow::Result;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 
@@ -350,9 +351,58 @@ async fn run_interactive_mode(
    println!();
 
 
+   // Start P2P server BEFORE JOIN so we can advertise the correct port
+   let (p2p_port_tx, p2p_port_rx) = tokio::sync::oneshot::channel();
+
+   let p2p_task = {
+       let state_clone = state.clone();
+       tokio::spawn(async move {
+           match p2p_server::start_p2p_listener(CLIENT_PORT).await {
+               Ok((listener, bound_port)) => {
+                   println!("[P2P-SERVER] ✅ P2P server bound to port {}", bound_port);
+
+                   // Update client state with P2P port
+                   {
+                       let mut s = state_clone.write().await;
+                       s.client_port = bound_port;
+                       s.p2p_port = bound_port;
+                   }
+
+                   // Send port back to main task
+                   let _ = p2p_port_tx.send(bound_port);
+
+                   // Run the P2P server
+                   if let Err(e) = p2p_server::run_p2p_server(listener, state_clone).await {
+                       eprintln!("[P2P-SERVER] Error: {}", e);
+                   }
+               }
+               Err(e) => {
+                   eprintln!("[P2P-SERVER] ❌ Failed to start: {}", e);
+               }
+           }
+       })
+   };
+
+   // Wait for P2P port to be bound (with timeout)
+   let _p2p_port = match tokio::time::timeout(
+       Duration::from_secs(2),
+       p2p_port_rx
+   ).await {
+       Ok(Ok(port)) => {
+           println!("[CLIENT] P2P server ready on port {}", port);
+           port
+       }
+       _ => {
+           eprintln!("[CLIENT] ⚠️  Failed to start P2P server, using default port");
+           CLIENT_PORT
+       }
+   };
+
+
    // Send JOIN
    if let Err(e) = simple_client::join_server(state.clone(), writer.clone(), &mut reader).await {
        println!("[CLIENT] ⚠️  JOIN failed: {}", e);
+       p2p_task.abort();
        return Ok(());
    }
 
@@ -443,6 +493,7 @@ async fn run_interactive_mode(
    listener_task.abort();
    ping_task.abort();
    api_task.abort();
+   p2p_task.abort();
 
 
    Ok(())
@@ -512,9 +563,58 @@ async fn run_interactive_upload_mode(
    println!();
 
 
+   // Start P2P server BEFORE JOIN so we can advertise the correct port
+   let (p2p_port_tx, p2p_port_rx) = tokio::sync::oneshot::channel();
+
+   let p2p_task = {
+       let state_clone = state.clone();
+       tokio::spawn(async move {
+           match p2p_server::start_p2p_listener(CLIENT_PORT).await {
+               Ok((listener, bound_port)) => {
+                   println!("[P2P-SERVER] ✅ P2P server bound to port {}", bound_port);
+
+                   // Update client state with P2P port
+                   {
+                       let mut s = state_clone.write().await;
+                       s.client_port = bound_port;
+                       s.p2p_port = bound_port;
+                   }
+
+                   // Send port back to main task
+                   let _ = p2p_port_tx.send(bound_port);
+
+                   // Run the P2P server
+                   if let Err(e) = p2p_server::run_p2p_server(listener, state_clone).await {
+                       eprintln!("[P2P-SERVER] Error: {}", e);
+                   }
+               }
+               Err(e) => {
+                   eprintln!("[P2P-SERVER] ❌ Failed to start: {}", e);
+               }
+           }
+       })
+   };
+
+   // Wait for P2P port to be bound (with timeout)
+   let _p2p_port = match tokio::time::timeout(
+       Duration::from_secs(2),
+       p2p_port_rx
+   ).await {
+       Ok(Ok(port)) => {
+           println!("[CLIENT] P2P server ready on port {}", port);
+           port
+       }
+       _ => {
+           eprintln!("[CLIENT] ⚠️  Failed to start P2P server, using default port");
+           CLIENT_PORT
+       }
+   };
+
+
    // Send JOIN with the image name in DOS
    if let Err(e) = simple_client::join_server(state.clone(), writer.clone(), &mut reader).await {
        println!("[CLIENT] ⚠️  JOIN failed: {}", e);
+       p2p_task.abort();
        return Ok(());
    }
 
@@ -635,6 +735,7 @@ async fn run_interactive_upload_mode(
    ping_task.abort();
    upload_task.abort();
    api_task.abort();
+   p2p_task.abort();
 
 
    Ok(())

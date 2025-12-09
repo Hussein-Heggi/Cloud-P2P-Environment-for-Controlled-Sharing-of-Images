@@ -179,12 +179,12 @@ async fn request_view(
     let image_name = payload.image_name.clone();
     let requested_views = payload.requested_views;
 
-    // Send VIEW_REQUEST via TCP
-    let request_id = crate::viewer::send_view_request(
+    // Send request using smart routing (P2P if online, server-mediated if offline)
+    let request_id = crate::viewer::request_image_access(
         api_state.client_state.clone(),
         api_state.writer.clone(),
-        payload.owner,
-        payload.image_name,
+        &payload.owner,
+        &payload.image_name,
         payload.requested_views,
     )
     .await

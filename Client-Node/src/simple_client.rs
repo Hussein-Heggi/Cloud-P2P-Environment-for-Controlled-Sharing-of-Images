@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::signal;
-use tokio::net::TcpSocket;
+use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 
 use crate::protocol::*;
@@ -265,12 +265,11 @@ pub async fn join_server(
 
     println!("[CLIENT] Sending JOIN to server {}...", server_addr);
 
-    // Advertise the fixed local port used for the TCP connection
-    let local_port = CLIENT_PORT;
-    {
-        let mut s = state.write().await;
-        s.client_port = local_port;
-    }
+    // Read the P2P port from state (set by P2P listener before JOIN)
+    let local_port = {
+        let s = state.read().await;
+        s.client_port
+    };
 
     // Build JOIN message payload
     // Format: [username_len:u16][username][port:u16][num_images:u32][image_names...]
@@ -878,17 +877,10 @@ pub async fn run_listener(
 
 /// Connect to server via TCP
 pub async fn connect_to_server(server_addr: SocketAddr) -> Result<(tokio::net::tcp::OwnedReadHalf, Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>)> {
-    println!("[CLIENT] Connecting to server at {} from local port {}...", server_addr, CLIENT_PORT);
+    println!("[CLIENT] Connecting to server at {}...", server_addr);
 
-    // Bind local port explicitly so the connection shows up as :9080
-    let socket = TcpSocket::new_v4()
-        .context("Failed to create TCP socket")?;
-    socket
-        .bind(SocketAddr::from(([0, 0, 0, 0], CLIENT_PORT)))
-        .context(format!("Failed to bind local TCP port {}", CLIENT_PORT))?;
-
-    let stream = socket
-        .connect(server_addr)
+    // Let OS choose source port - P2P listener will use port 9080
+    let stream = TcpStream::connect(server_addr)
         .await
         .context(format!("Failed to connect to server at {}", server_addr))?;
 

@@ -247,13 +247,15 @@ pub async fn request_image_access(
     image_name: &str,
     requested_views: u32,
 ) -> Result<u32> {
-    // Check DOS for owner's online status
-    let owner_online = {
+    // Check DOS for owner's online status and connection info
+    let (owner_online, owner_ip, owner_port) = {
         let s = state.read().await;
 
         // Find owner in DOS-C
         if let Some(owner_client) = s.dos.clients.get(owner) {
-            owner_client.online
+            println!("[DEBUG] Owner '{}' in DOS-C: online={}, ip={}, port={}",
+                     owner, owner_client.online, owner_client.client_ip, owner_client.client_port);
+            (owner_client.online, owner_client.client_ip.clone(), owner_client.client_port)
         } else {
             return Err(anyhow::anyhow!("Owner '{}' not found in DOS-C", owner));
         }
@@ -261,7 +263,8 @@ pub async fn request_image_access(
 
     if owner_online {
         // Owner is online → Use P2P direct connection
-        println!("[REQUEST] 🔵 Owner {} is ONLINE - using P2P direct connection", owner);
+        println!("[REQUEST] 🔵 Owner {} is ONLINE - attempting P2P to {}:{}",
+                 owner, owner_ip, owner_port);
         send_peer_view_request(state, owner, image_name, requested_views).await
     } else {
         // Owner is offline → Use server-mediated flow
@@ -327,14 +330,20 @@ pub async fn send_peer_view_request(
     // Generate unique request ID
     let request_id = rand::random::<u32>();
 
-    println!("[P2P-VIEWER] Connecting to owner {}:{} for image '{}'...", owner_ip, owner_port, image_name);
+    println!("[P2P-VIEWER] 🔌 Attempting TCP connection to {}:{}...", owner_ip, owner_port);
 
     // Establish TCP connection to owner's P2P port
-    let mut stream = tokio::net::TcpStream::connect(format!("{}:{}", owner_ip, owner_port))
-        .await
-        .context(format!("Failed to connect to owner {}:{}", owner_ip, owner_port))?;
-
-    println!("[P2P-VIEWER] ✅ Connected to owner {}:{}", owner_ip, owner_port);
+    let mut stream = match tokio::net::TcpStream::connect(format!("{}:{}", owner_ip, owner_port)).await {
+        Ok(s) => {
+            println!("[P2P-VIEWER] ✅ TCP connection established to {}:{}", owner_ip, owner_port);
+            s
+        }
+        Err(e) => {
+            println!("[P2P-VIEWER] ❌ TCP connection FAILED to {}:{}", owner_ip, owner_port);
+            println!("[P2P-VIEWER] ❌ Error details: {}", e);
+            return Err(anyhow::anyhow!("Failed to connect to owner's P2P server at {}:{}: {}", owner_ip, owner_port, e));
+        }
+    };
 
     // Build PEER_VIEW_REQUEST payload
     // Wire format: [viewer_len:u16][viewer][image_name_len:u16][image_name][requested_views:u32]
