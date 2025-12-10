@@ -671,8 +671,10 @@ pub async fn run_listener(
 
             PENDING_REQUEST => {
                 // Phase 5B: Handle offline request delivery from server
-                // Wire format: same as VIEW_NOTIFICATION
-                // [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name][req_id:u32][requested_views:u32]
+                // Wire format (NEW: includes requester P2P address):
+                // [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name]
+                // [req_id:u32][requested_views:u32]
+                // [requester_ip_len:u16][requester_ip][requester_port:u16]
                 println!("[OWNER] 📬 PENDING_REQUEST received (offline request delivery)");
 
                 let mut offset = 0;
@@ -722,6 +724,30 @@ pub async fn run_listener(
                 } else {
                     0
                 };
+                offset += 4;
+
+                // NEW: Parse requester's P2P address
+                let peer_addr = if data.len() >= offset + 2 {
+                    let ip_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                    offset += 2;
+
+                    if data.len() >= offset + ip_len + 2 {
+                        let requester_ip = String::from_utf8(data[offset..offset + ip_len].to_vec())?;
+                        offset += ip_len;
+
+                        let requester_port = u16::from_le_bytes(data[offset..offset + 2].try_into()?);
+
+                        let addr_str = format!("{}:{}", requester_ip, requester_port);
+                        println!("[OWNER] 📍 Requester P2P address: {}", addr_str);
+                        addr_str.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap())
+                    } else {
+                        println!("[OWNER] ⚠️  Incomplete requester address, using fallback");
+                        "0.0.0.0:0".parse().unwrap()
+                    }
+                } else {
+                    println!("[OWNER] ⚠️  No requester address in payload (old format?), using fallback");
+                    "0.0.0.0:0".parse().unwrap()
+                };
 
                 println!("\n╔═══════════════════════════════════════════════════════════╗");
                 println!("║  📬 OFFLINE REQUEST DELIVERED BY SERVER                  ║");
@@ -730,6 +756,7 @@ pub async fn run_listener(
                 println!("║  From:       {}                                          ║", viewer_name);
                 println!("║  Image:      {}                                         ║", image_name);
                 println!("║  Views:      {}                                              ║", requested_views);
+                println!("║  Peer Addr:  {}                                     ║", peer_addr);
                 println!("╠═══════════════════════════════════════════════════════════╣");
                 println!("║  This request was made while you were offline.            ║");
                 println!("║  Use CLI commands to approve/deny:                        ║");
@@ -737,13 +764,13 @@ pub async fn run_listener(
                 println!("║    deny_p2p <request_id>                                  ║");
                 println!("╚═══════════════════════════════════════════════════════════╝\n");
 
-                // Store in pending requests
+                // Store in pending requests with actual peer address
                 let pending_req = crate::owner::PendingViewRequest {
                     request_id: req_id,
                     viewer: viewer_name.clone(),
                     image_name: image_name.clone(),
                     requested_views,
-                    peer_addr: "0.0.0.0:0".parse().unwrap(),  // Server-mediated, no peer addr
+                    peer_addr,  // Now has actual viewer's P2P address!
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -755,7 +782,7 @@ pub async fn run_listener(
                     s.pending_view_requests.insert(req_id, pending_req);
                 }
 
-                println!("[OWNER] Stored offline request in pending queue");
+                println!("[OWNER] Stored offline request in pending queue with peer address: {}", peer_addr);
             }
 
             DOS_UPDATE => {

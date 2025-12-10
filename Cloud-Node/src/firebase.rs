@@ -30,6 +30,9 @@ pub struct OfflineRequest {
     pub request_id: u32,
     pub requested_views: u32,
     pub timestamp: u64,
+    // NEW: Store requester's P2P address so owner can connect back
+    pub requester_ip: String,
+    pub requester_port: u16,
 }
 
 /// Document for offline_requests_map collection

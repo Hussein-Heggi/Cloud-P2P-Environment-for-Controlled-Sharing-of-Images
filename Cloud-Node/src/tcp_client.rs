@@ -537,8 +537,10 @@ async fn handle_join_tcp(
 
                     // Send each request to client
                     for req in requests {
-                        // Format: PENDING_REQUEST message
-                        // [requester_len:u16][requester][image_name_len:u16][image_name][request_id:u32][requested_views:u32]
+                        // Format: PENDING_REQUEST message (NEW: includes requester P2P address)
+                        // [requester_len:u16][requester][image_name_len:u16][image_name]
+                        // [request_id:u32][requested_views:u32]
+                        // [requester_ip_len:u16][requester_ip][requester_port:u16]
                         let mut payload = Vec::new();
                         payload.extend((req.requester.len() as u16).to_le_bytes());
                         payload.extend(req.requester.as_bytes());
@@ -547,11 +549,17 @@ async fn handle_join_tcp(
                         payload.extend(req.request_id.to_le_bytes());
                         payload.extend(req.requested_views.to_le_bytes());
 
+                        // NEW: Include requester's P2P address
+                        payload.extend((req.requester_ip.len() as u16).to_le_bytes());
+                        payload.extend(req.requester_ip.as_bytes());
+                        payload.extend(req.requester_port.to_le_bytes());
+
                         // Send to client
                         if let Err(e) = send_tcp_response(stream.clone(), client_protocol::PENDING_REQUEST, &payload).await {
                             warn!("Failed to send pending request to {}: {}", username, e);
                         } else {
-                            println!("[JOIN] ✅ Sent pending request from {} to {}", req.requester, username);
+                            println!("[JOIN] ✅ Sent pending request from {} ({}:{}) to {}",
+                                     req.requester, req.requester_ip, req.requester_port, username);
                         }
                     }
                 }
@@ -681,7 +689,8 @@ async fn handle_view_request_tcp(
              viewer, owner, image_name, requested_views, request_id);
 
     // Check if this server is the executor (only executor writes to Firebase)
-    let (is_executor, firestore_db) = {
+    // Also look up viewer's P2P address from DOS
+    let (is_executor, firestore_db, viewer_ip, viewer_port) = {
         let s = state.read().await;
         let my_ip = cfg.service_bind_addr()
             .expect("service_bind_addr not configured")
@@ -697,7 +706,17 @@ async fn handle_view_request_tcp(
             false
         };
 
-        (is_exec, s.firestore_db.clone())
+        // Look up viewer's P2P address from DOS
+        let (v_ip, v_port) = if let Some(viewer_client) = s.dos_clients.get(&viewer) {
+            println!("[VIEW_REQUEST] 📍 Found viewer {} in DOS: ip={}, port={}",
+                     viewer, viewer_client.client_ip, viewer_client.client_port);
+            (viewer_client.client_ip.clone(), viewer_client.client_port)
+        } else {
+            println!("[VIEW_REQUEST] ⚠️  Viewer {} not found in DOS, using fallback address", viewer);
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_exec, s.firestore_db.clone(), v_ip, v_port)
     };
 
     if !is_executor {
@@ -716,7 +735,7 @@ async fn handle_view_request_tcp(
         }
     };
 
-    // Create OfflineRequest struct
+    // Create OfflineRequest struct with viewer's P2P address
     let offline_request = crate::firebase::OfflineRequest {
         requester: viewer.clone(),
         owner: owner.clone(),
@@ -727,7 +746,11 @@ async fn handle_view_request_tcp(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64,
+        requester_ip: viewer_ip.clone(),
+        requester_port: viewer_port,
     };
+
+    println!("[VIEW_REQUEST] 💾 Storing with viewer P2P address: {}:{}", viewer_ip, viewer_port);
 
     // Save to Firebase
     match crate::firebase::add_offline_request(&db, &owner, offline_request).await {
