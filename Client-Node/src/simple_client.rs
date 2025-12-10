@@ -68,6 +68,28 @@ impl PendingImageDownload {
     }
 }
 
+/// Pending adjust request from viewer (viewer side)
+#[derive(Debug, Clone)]
+pub struct PendingAdjustRequest {
+    pub request_id: u32,
+    pub owner: String,
+    pub image_name: String,
+    pub requested_views: u32,
+    pub timestamp: u64,
+}
+
+/// Incoming adjust request from viewer (owner side)
+#[derive(Debug, Clone)]
+pub struct IncomingAdjustRequest {
+    pub request_id: u32,
+    pub viewer: String,
+    pub image_name: String,
+    pub requested_views: u32,
+    pub current_views: u32,
+    pub peer_addr: SocketAddr,
+    pub timestamp: u64,
+}
+
 /// Client state
 #[derive(Clone)]
 pub struct ClientState {
@@ -94,6 +116,10 @@ pub struct ClientState {
     /// NEW P2P Phase 3D: Track in-progress P2P image downloads (viewer side)
     /// Key: "owner_imagename"
     pub pending_downloads: HashMap<String, PendingImageDownload>,
+    /// NEW: Track viewer's pending adjust requests (viewer side)
+    pub pending_adjust_requests: HashMap<u32, PendingAdjustRequest>,
+    /// NEW: Track owner's incoming adjust requests from viewers (owner side)
+    pub incoming_adjust_requests: HashMap<u32, IncomingAdjustRequest>,
 }
 
 impl ClientState {
@@ -113,6 +139,8 @@ impl ClientState {
             downloads: Vec::new(),
             local_access_map: LocalAccessMap::new(),
             pending_downloads: HashMap::new(),
+            pending_adjust_requests: HashMap::new(),
+            incoming_adjust_requests: HashMap::new(),
         }
     }
 

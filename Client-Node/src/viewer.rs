@@ -392,6 +392,69 @@ pub async fn send_peer_view_request(
     Ok(request_id)
 }
 
+// ============================================================================
+// Phase 3.3: Viewer-Initiated Adjust Request
+// ============================================================================
+
+/// Send PEER_ADJUST_REQUEST to owner requesting view count adjustment
+pub async fn send_peer_adjust_request(
+    state: SharedClientState,
+    owner: &str,
+    image_name: &str,
+    requested_views: u32,
+) -> Result<u32> {
+    let request_id = rand::random::<u32>();
+
+    // Get owner's P2P address from DOS
+    let (owner_ip, owner_port) = {
+        let s = state.read().await;
+        let owner_client = s.dos.clients.get(owner)
+            .ok_or_else(|| anyhow::anyhow!("Owner {} not found in DOS", owner))?;
+
+        if !owner_client.online {
+            return Err(anyhow::anyhow!("Owner {} is offline", owner));
+        }
+
+        (owner_client.client_ip.clone(), owner_client.client_port)
+    };
+
+    println!("[ADJUST-REQUEST] Connecting to owner {}:{}", owner_ip, owner_port);
+
+    // Connect to owner's P2P server
+    let mut stream = tokio::net::TcpStream::connect(format!("{}:{}", owner_ip, owner_port)).await?;
+
+    // Get viewer username
+    let viewer = {
+        let s = state.read().await;
+        s.username.clone()
+    };
+
+    // Build payload: [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name][requested_views:u32]
+    let mut payload = Vec::new();
+
+    let viewer_bytes = viewer.as_bytes();
+    payload.extend((viewer_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(viewer_bytes);
+
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+
+    payload.extend(requested_views.to_le_bytes());
+
+    // Send: [total_len:u32][msg_type:u8][payload]
+    let total_len = 1 + payload.len();
+    stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+    stream.write_u8(crate::protocol::PEER_ADJUST_REQUEST).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+
+    println!("[ADJUST-REQUEST] Sent request to {}: image='{}', views={}",
+             owner, image_name, requested_views);
+
+    Ok(request_id)
+}
+
 /// Download and save an image from IMAGE_CHUNK messages
 /// Returns the path to the saved embedded PNG file
 pub async fn save_received_image(

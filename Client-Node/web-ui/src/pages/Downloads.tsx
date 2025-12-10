@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import StatusBar from '../components/StatusBar';
-import { getViewerAccessMap, viewImage, AccessGrant } from '../api/client';
+import { getViewerAccessMap, viewImage, requestAdjustViews, AccessGrant } from '../api/client';
 
 export default function Downloads() {
   const [grants, setGrants] = useState<AccessGrant[]>([]);
@@ -67,6 +67,25 @@ export default function Downloads() {
     setCurrentImage(null);
   };
 
+  const handleRequestAdjust = async (owner: string, imageName: string, current: number) => {
+    const requested = prompt(`Current views: ${current}\nRequest how many views?`);
+    if (requested === null) return; // User cancelled
+
+    const requestedViews = parseInt(requested);
+    if (isNaN(requestedViews) || requestedViews <= 0) {
+      alert('Please enter a valid positive number');
+      return;
+    }
+
+    try {
+      await requestAdjustViews(owner, imageName, requestedViews);
+      alert(`Request sent to ${owner} for ${requestedViews} views of ${imageName}`);
+    } catch (error) {
+      console.error('Failed to request adjust:', error);
+      alert('Failed to send request. The owner might be offline.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
       <StatusBar />
@@ -116,7 +135,7 @@ export default function Downloads() {
                   <button
                     onClick={() => handleViewImage(grant.owner, grant.image_name)}
                     disabled={viewing?.owner === grant.owner && viewing?.image === grant.image_name}
-                    className={`w-full py-2 px-4 rounded-md font-medium ${
+                    className={`w-full py-2 px-4 rounded-md font-medium mb-2 ${
                       viewing?.owner === grant.owner && viewing?.image === grant.image_name
                         ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                         : grant.remaining_views <= 0
@@ -129,6 +148,14 @@ export default function Downloads() {
                       : grant.remaining_views <= 0
                       ? 'No Views Left'
                       : 'View Image'}
+                  </button>
+
+                  {/* Request More Views Button */}
+                  <button
+                    onClick={() => handleRequestAdjust(grant.owner, grant.image_name, grant.remaining_views)}
+                    className="w-full py-2 px-4 rounded-md font-medium bg-green-500 hover:bg-green-600 text-white"
+                  >
+                    Request More Views
                   </button>
                 </div>
               </div>

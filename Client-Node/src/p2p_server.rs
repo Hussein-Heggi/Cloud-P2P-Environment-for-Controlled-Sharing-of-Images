@@ -148,8 +148,26 @@ async fn handle_peer_connection(
             protocol::PEER_ADJUST_REQUEST => {
                 handle_peer_adjust_request(&mut stream, peer_addr, &payload, state.clone()).await?;
             }
+            protocol::PEER_ADJUST_APPROVED => {
+                handle_peer_adjust_approved(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_ADJUST_REJECTED => {
+                handle_peer_adjust_rejected(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_ADJUST_ORDER => {
+                handle_peer_adjust_order(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_ADJUST_ORDER_ACK => {
+                handle_peer_adjust_order_ack(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_ADJUST_ORDER_NOT_FOUND => {
+                handle_peer_adjust_order_not_found(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
             protocol::PEER_REVOKE => {
                 handle_peer_revoke(&mut stream, peer_addr, &payload, state.clone()).await?;
+            }
+            protocol::PEER_REVOKE_ACK => {
+                handle_peer_revoke_ack(&mut stream, peer_addr, &payload, state.clone()).await?;
             }
             _ => {
                 println!("[P2P_SERVER] Unknown P2P message type: {}", msg_type);
@@ -334,10 +352,59 @@ async fn handle_peer_adjust_request(
     stream: &mut TcpStream,
     peer_addr: SocketAddr,
     data: &[u8],
-    _state: SharedClientState,
+    state: SharedClientState,
 ) -> Result<()> {
-    println!("[P2P_SERVER] Handling PEER_ADJUST_REQUEST from {} (not yet implemented)", peer_addr);
-    send_p2p_message(stream, protocol::PEER_ACK, &[]).await?;
+    println!("[P2P_OWNER] Received PEER_ADJUST_REQUEST from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse viewer name
+    let viewer_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let viewer = String::from_utf8(data[offset..offset+viewer_len].to_vec())?;
+    offset += viewer_len;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+    offset += image_len;
+
+    // Parse requested views
+    let requested_views = u32::from_le_bytes(data[offset..offset+4].try_into()?);
+
+    println!("[P2P_OWNER] Adjust request: viewer={}, image={}, requested_views={}",
+             viewer, image_name, requested_views);
+
+    // Get current granted views from LocalAccessMap
+    let current_views = {
+        let s = state.read().await;
+        s.local_access_map.get_grant(&viewer, &image_name)
+            .map(|g| g.granted_views)
+            .unwrap_or(0)
+    };
+
+    // Store as incoming request
+    let request_id = rand::random::<u32>();
+    {
+        let mut s = state.write().await;
+        s.incoming_adjust_requests.insert(request_id, crate::simple_client::IncomingAdjustRequest {
+            request_id,
+            viewer: viewer.clone(),
+            image_name: image_name.clone(),
+            requested_views,
+            current_views,
+            peer_addr,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        });
+    }
+
+    println!("[P2P_OWNER] Stored incoming adjust request #{} (current: {} views)",
+             request_id, current_views);
+
     Ok(())
 }
 
@@ -346,10 +413,403 @@ async fn handle_peer_revoke(
     stream: &mut TcpStream,
     peer_addr: SocketAddr,
     data: &[u8],
-    _state: SharedClientState,
+    state: SharedClientState,
 ) -> Result<()> {
-    println!("[P2P_SERVER] Handling PEER_REVOKE from {} (not yet implemented)", peer_addr);
-    send_p2p_message(stream, protocol::PEER_ACK, &[]).await?;
+    println!("[P2P_VIEWER] Received PEER_REVOKE from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+
+    // Determine owner from peer_addr
+    let owner = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+        s.dos.clients.iter()
+            .find(|(_, c)| c.client_ip == peer_ip)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine owner from {}", peer_addr))?
+    };
+
+    println!("[P2P_VIEWER] Revoke: owner={}, image={}", owner, image_name);
+
+    // Remove from ViewerAccessMap
+    use crate::viewer::ViewerAccessMap;
+    let map_path = ViewerAccessMap::default_path()?;
+    let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+        .unwrap_or_else(|_| ViewerAccessMap::new());
+
+    viewer_map.remove_grant(&owner, &image_name);
+    viewer_map.save_to_file(&map_path).await?;
+
+    println!("[P2P_VIEWER] ✓ Removed from ViewerAccessMap");
+
+    // Delete encrypted image file
+    let file_path = format!("client_images/{}.png", image_name);
+    match tokio::fs::remove_file(&file_path).await {
+        Ok(_) => println!("[P2P_VIEWER] ✓ Deleted file: {}", file_path),
+        Err(e) => println!("[P2P_VIEWER] ⚠ Failed to delete {}: {}", file_path, e),
+    }
+
+    // Send ACK: [image_name_len:u16][image_name]
+    let mut response = Vec::new();
+    let img_bytes = image_name.as_bytes();
+    response.extend((img_bytes.len() as u16).to_le_bytes());
+    response.extend_from_slice(img_bytes);
+
+    let total_len = 1 + response.len();
+    stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+    stream.write_u8(crate::protocol::PEER_REVOKE_ACK).await?;
+    stream.write_all(&response).await?;
+    stream.flush().await?;
+
+    println!("[P2P_VIEWER] ✅ Revocation complete");
+
+    Ok(())
+}
+
+/// Handle PEER_ADJUST_APPROVED from owner (viewer side)
+async fn handle_peer_adjust_approved(
+    _stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_VIEWER] Received PEER_ADJUST_APPROVED from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+    offset += image_len;
+
+    // Parse approved views
+    let approved_views = u32::from_le_bytes(data[offset..offset+4].try_into()?);
+
+    // Determine owner from peer_addr
+    let owner = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+        s.dos.clients.iter()
+            .find(|(_, c)| c.client_ip == peer_ip)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine owner from {}", peer_addr))?
+    };
+
+    println!("[P2P_VIEWER] Adjust approved: owner={}, image={}, new_views={}",
+             owner, image_name, approved_views);
+
+    // Update ViewerAccessMap
+    use crate::viewer::ViewerAccessMap;
+    let map_path = ViewerAccessMap::default_path()?;
+    let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+        .unwrap_or_else(|_| ViewerAccessMap::new());
+
+    // Update remaining views
+    if let Some(grant) = viewer_map.grants.values_mut()
+        .find(|g| g.owner == owner && g.image_name == image_name) {
+        grant.remaining_views = approved_views;
+    }
+
+    // Auto-cleanup if views = 0
+    if approved_views == 0 {
+        println!("[P2P_VIEWER] Views = 0, triggering auto-cleanup");
+        viewer_map.remove_grant(&owner, &image_name);
+
+        let file_path = format!("client_images/{}.png", image_name);
+        if let Err(e) = tokio::fs::remove_file(&file_path).await {
+            println!("[P2P_VIEWER] Failed to delete {}: {}", file_path, e);
+        } else {
+            println!("[P2P_VIEWER] Deleted {}", file_path);
+        }
+    }
+
+    // Save updated map
+    viewer_map.save_to_file(&map_path).await?;
+
+    println!("[P2P_VIEWER] ✅ Adjustment complete: {} now has {} views",
+             image_name, approved_views);
+
+    // Remove from pending requests
+    {
+        let mut s = state.write().await;
+        s.pending_adjust_requests.retain(|_, req| {
+            !(req.owner == owner && req.image_name == image_name)
+        });
+    }
+
+    Ok(())
+}
+
+/// Handle PEER_ADJUST_REJECTED from owner (viewer side)
+async fn handle_peer_adjust_rejected(
+    _stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_VIEWER] Received PEER_ADJUST_REJECTED from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+    offset += image_len;
+
+    // Parse reason
+    let reason_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let reason = String::from_utf8(data[offset..offset+reason_len].to_vec())?;
+
+    println!("[P2P_VIEWER] Adjust rejected: image={}, reason={}",
+             image_name, reason);
+
+    // Remove from pending requests
+    {
+        let mut s = state.write().await;
+        s.pending_adjust_requests.retain(|_, req| req.image_name != image_name);
+    }
+
+    Ok(())
+}
+
+/// Handle PEER_ADJUST_ORDER from owner (viewer side)
+async fn handle_peer_adjust_order(
+    stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_VIEWER] Received PEER_ADJUST_ORDER from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+    offset += image_len;
+
+    // Parse new views
+    let new_views = u32::from_le_bytes(data[offset..offset+4].try_into()?);
+
+    // Determine owner
+    let owner = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+        s.dos.clients.iter()
+            .find(|(_, c)| c.client_ip == peer_ip)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine owner from {}", peer_addr))?
+    };
+
+    println!("[P2P_VIEWER] Adjust order: owner={}, image={}, new_views={}",
+             owner, image_name, new_views);
+
+    // Update ViewerAccessMap
+    use crate::viewer::ViewerAccessMap;
+    let map_path = ViewerAccessMap::default_path()?;
+    let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+        .unwrap_or_else(|_| ViewerAccessMap::new());
+
+    // Check if grant exists
+    let found = viewer_map.grants.values()
+        .any(|g| g.owner == owner && g.image_name == image_name);
+
+    if found {
+        // Update views
+        if let Some(grant) = viewer_map.grants.values_mut()
+            .find(|g| g.owner == owner && g.image_name == image_name) {
+            grant.remaining_views = new_views;
+        }
+
+        // Auto-cleanup if views = 0
+        if new_views == 0 {
+            println!("[P2P_VIEWER] Views = 0, triggering auto-cleanup");
+            viewer_map.remove_grant(&owner, &image_name);
+
+            let file_path = format!("client_images/{}.png", image_name);
+            if let Err(e) = tokio::fs::remove_file(&file_path).await {
+                println!("[P2P_VIEWER] Failed to delete {}: {}", file_path, e);
+            } else {
+                println!("[P2P_VIEWER] Deleted {}", file_path);
+            }
+        }
+
+        viewer_map.save_to_file(&map_path).await?;
+
+        println!("[P2P_VIEWER] ✅ Adjusted to {} views", new_views);
+
+        // Send ACK: [image_name_len:u16][image_name][confirmed_views:u32]
+        let mut response = Vec::new();
+        let img_bytes = image_name.as_bytes();
+        response.extend((img_bytes.len() as u16).to_le_bytes());
+        response.extend_from_slice(img_bytes);
+        response.extend(new_views.to_le_bytes());
+
+        let total_len = 1 + response.len();
+        stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+        stream.write_u8(crate::protocol::PEER_ADJUST_ORDER_ACK).await?;
+        stream.write_all(&response).await?;
+        stream.flush().await?;
+    } else {
+        println!("[P2P_VIEWER] ✗ Grant not found");
+
+        // Send NOT_FOUND: [image_name_len:u16][image_name]
+        let mut response = Vec::new();
+        let img_bytes = image_name.as_bytes();
+        response.extend((img_bytes.len() as u16).to_le_bytes());
+        response.extend_from_slice(img_bytes);
+
+        let total_len = 1 + response.len();
+        stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+        stream.write_u8(crate::protocol::PEER_ADJUST_ORDER_NOT_FOUND).await?;
+        stream.write_all(&response).await?;
+        stream.flush().await?;
+    }
+
+    Ok(())
+}
+
+/// Handle PEER_ADJUST_ORDER_ACK from viewer (owner side)
+async fn handle_peer_adjust_order_ack(
+    _stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_OWNER] Received PEER_ADJUST_ORDER_ACK from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+    offset += image_len;
+
+    // Parse confirmed views
+    let confirmed_views = u32::from_le_bytes(data[offset..offset+4].try_into()?);
+
+    // Determine viewer
+    let viewer = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+        s.dos.clients.iter()
+            .find(|(_, c)| c.client_ip == peer_ip)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine viewer from {}", peer_addr))?
+    };
+
+    println!("[P2P_OWNER] Adjust order confirmed: viewer={}, image={}, views={}",
+             viewer, image_name, confirmed_views);
+
+    // Update LocalAccessMap
+    {
+        let mut s = state.write().await;
+        s.local_access_map.adjust_views(&viewer, &image_name, confirmed_views);
+
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            s.local_access_map.save_to_file(&path)?;
+        }
+    }
+
+    println!("[P2P_OWNER] ✅ LocalAccessMap updated");
+
+    Ok(())
+}
+
+/// Handle PEER_ADJUST_ORDER_NOT_FOUND from viewer (owner side)
+async fn handle_peer_adjust_order_not_found(
+    _stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_OWNER] Received PEER_ADJUST_ORDER_NOT_FOUND from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+
+    // Determine viewer
+    let viewer = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+        s.dos.clients.iter()
+            .find(|(_, c)| c.client_ip == peer_ip)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine viewer from {}", peer_addr))?
+    };
+
+    println!("[P2P_OWNER] Viewer no longer has image: viewer={}, image={}",
+             viewer, image_name);
+
+    // Auto-remove from LocalAccessMap (stale data)
+    {
+        let mut s = state.write().await;
+        s.local_access_map.revoke_access(&viewer, &image_name);
+
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            s.local_access_map.save_to_file(&path)?;
+        }
+    }
+
+    println!("[P2P_OWNER] ✅ Removed stale grant from LocalAccessMap");
+
+    Ok(())
+}
+
+/// Handle PEER_REVOKE_ACK from viewer (owner side)
+async fn handle_peer_revoke_ack(
+    _stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    data: &[u8],
+    state: SharedClientState,
+) -> Result<()> {
+    println!("[P2P_OWNER] Received PEER_REVOKE_ACK from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse image name
+    let image_len = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+    offset += 2;
+    let image_name = String::from_utf8(data[offset..offset+image_len].to_vec())?;
+
+    // Determine viewer
+    let viewer = {
+        let s = state.read().await;
+        let peer_ip = peer_addr.ip().to_string();
+        s.dos.clients.iter()
+            .find(|(_, c)| c.client_ip == peer_ip)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine viewer from {}", peer_addr))?
+    };
+
+    println!("[P2P_OWNER] Revoke confirmed: viewer={}, image={}", viewer, image_name);
+
+    // Remove from LocalAccessMap
+    {
+        let mut s = state.write().await;
+        s.local_access_map.revoke_access(&viewer, &image_name);
+
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            s.local_access_map.save_to_file(&path)?;
+        }
+    }
+
+    println!("[P2P_OWNER] ✅ Removed from LocalAccessMap");
+
     Ok(())
 }
 

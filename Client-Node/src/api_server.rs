@@ -429,6 +429,27 @@ async fn view_image(
     let new_remaining = viewer_map.get_remaining_views(&owner, &image_name);
     println!("[VIEW] 📉 View count decremented: {} → {} remaining", remaining_views, new_remaining);
 
+    // AUTO-CLEANUP: Delete if views = 0
+    if new_remaining == 0 {
+        println!("[VIEW] Views exhausted, triggering auto-cleanup");
+
+        // Remove from map
+        viewer_map.remove_grant(&owner, &image_name);
+
+        // Delete file
+        let file_path = PathBuf::from(&encrypted_path);
+        if let Err(e) = tokio::fs::remove_file(&file_path).await {
+            println!("[VIEW] ⚠ Failed to delete {}: {}", file_path.display(), e);
+        } else {
+            println!("[VIEW] ✓ Deleted {}", file_path.display());
+        }
+
+        // Save updated map (grant removed)
+        viewer_map.save_to_file(&map_path)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save viewer map: {}", e)))?;
+    }
+
     // Convert image to PNG bytes in memory
     let mut png_bytes: Vec<u8> = Vec::new();
     true_img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
@@ -484,6 +505,132 @@ async fn get_viewer_access_map(
 }
 
 // ============================================================================
+// Phase 3: Adjust and Revoke API Endpoints
+// ============================================================================
+
+/// POST /api/adjust-request/:owner/:image - Viewer requests view count adjustment
+#[derive(Debug, serde::Deserialize)]
+struct AdjustRequestPayload {
+    requested_views: u32,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AdjustRequestResponse {
+    success: bool,
+    request_id: u32,
+}
+
+async fn request_adjust_views(
+    State(api_state): State<ApiState>,
+    Path((owner, image_name)): Path<(String, String)>,
+    Json(payload): Json<AdjustRequestPayload>,
+) -> Result<Json<AdjustRequestResponse>, (StatusCode, String)> {
+    let request_id = crate::viewer::send_peer_adjust_request(
+        api_state.client_state.clone(),
+        &owner,
+        &image_name,
+        payload.requested_views,
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Store in pending requests
+    {
+        let mut s = api_state.client_state.write().await;
+        s.pending_adjust_requests.insert(request_id, crate::simple_client::PendingAdjustRequest {
+            request_id,
+            owner,
+            image_name,
+            requested_views: payload.requested_views,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        });
+    }
+
+    Ok(Json(AdjustRequestResponse {
+        success: true,
+        request_id
+    }))
+}
+
+/// GET /api/local-access-map - Get owner's granted access
+#[derive(Debug, serde::Serialize)]
+struct LocalAccessMapResponse {
+    grants: Vec<AccessGrantInfo>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AccessGrantInfo {
+    viewer: String,
+    image_name: String,
+    granted_views: u32,
+    granted_at: u64,
+}
+
+async fn get_local_access_map(
+    State(api_state): State<ApiState>,
+) -> Json<LocalAccessMapResponse> {
+    let s = api_state.client_state.read().await;
+
+    let grants: Vec<AccessGrantInfo> = s.local_access_map.grants.values()
+        .map(|g| AccessGrantInfo {
+            viewer: g.viewer.clone(),
+            image_name: g.image_name.clone(),
+            granted_views: g.granted_views,
+            granted_at: g.granted_at,
+        })
+        .collect();
+
+    Json(LocalAccessMapResponse { grants })
+}
+
+/// POST /api/owner/adjust/:viewer/:image - Owner adjusts view count
+#[derive(Debug, serde::Deserialize)]
+struct OwnerAdjustPayload {
+    new_views: u32,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SuccessResponse {
+    success: bool,
+}
+
+async fn owner_adjust_views(
+    State(api_state): State<ApiState>,
+    Path((viewer, image_name)): Path<(String, String)>,
+    Json(payload): Json<OwnerAdjustPayload>,
+) -> Result<Json<SuccessResponse>, (StatusCode, String)> {
+    // Validation: new_views must be > 0
+    if payload.new_views == 0 {
+        return Err((StatusCode::BAD_REQUEST,
+                   "View count must be > 0. Use revoke endpoint instead.".to_string()));
+    }
+
+    crate::owner::send_peer_adjust_order(
+        api_state.client_state.clone(),
+        &viewer,
+        &image_name,
+        payload.new_views,
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(SuccessResponse { success: true }))
+}
+
+/// POST /api/owner/revoke/:viewer/:image - Owner revokes access
+async fn owner_revoke_access(
+    State(api_state): State<ApiState>,
+    Path((viewer, image_name)): Path<(String, String)>,
+) -> Result<Json<SuccessResponse>, (StatusCode, String)> {
+    crate::owner::send_peer_revoke(
+        api_state.client_state.clone(),
+        &viewer,
+        &image_name,
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(SuccessResponse { success: true }))
+}
+
+// ============================================================================
 // Server Setup
 // ============================================================================
 
@@ -522,6 +669,11 @@ pub async fn run_api_server(
         .route("/api/notifications", get(get_notifications))
         .route("/api/approve/:request_id", post(approve_request))
         .route("/api/deny/:request_id", post(deny_request))
+        // Adjust and Revoke operations
+        .route("/api/adjust-request/:owner/:image", post(request_adjust_views))
+        .route("/api/local-access-map", get(get_local_access_map))
+        .route("/api/owner/adjust/:viewer/:image", post(owner_adjust_views))
+        .route("/api/owner/revoke/:viewer/:image", post(owner_revoke_access))
         // Serve static files (images)
         .nest_service("/downloads", ServeDir::new("downloads"))
         .layer(cors)

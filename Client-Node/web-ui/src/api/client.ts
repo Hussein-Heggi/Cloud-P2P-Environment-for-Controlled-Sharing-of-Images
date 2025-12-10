@@ -86,6 +86,35 @@ export interface ViewerAccessMapResponse {
   total_available: number;
 }
 
+// Adjust and Revoke Types
+export interface AdjustRequestPayload {
+  requested_views: number;
+}
+
+export interface AdjustRequestResponse {
+  success: boolean;
+  request_id: number;
+}
+
+export interface LocalAccessGrant {
+  viewer: string;
+  image_name: string;
+  granted_views: number;
+  granted_at: number;
+}
+
+export interface LocalAccessMapResponse {
+  grants: LocalAccessGrant[];
+}
+
+export interface OwnerAdjustPayload {
+  new_views: number;
+}
+
+export interface SuccessResponse {
+  success: boolean;
+}
+
 // API Methods
 export const getStatus = async (): Promise<StatusResponse> => {
   const response = await api.get<StatusResponse>('/api/status');
@@ -149,6 +178,31 @@ export const viewImage = async (owner: string, imageName: string): Promise<{ blo
     blob: response.data,
     remainingViews,
   };
+};
+
+// Adjust and Revoke API Methods
+export const requestAdjustViews = async (owner: string, image: string, requestedViews: number): Promise<AdjustRequestResponse> => {
+  const response = await api.post<AdjustRequestResponse>(`/api/adjust-request/${owner}/${image}`, {
+    requested_views: requestedViews,
+  });
+  return response.data;
+};
+
+export const getLocalAccessMap = async (): Promise<LocalAccessMapResponse> => {
+  const response = await api.get<LocalAccessMapResponse>('/api/local-access-map');
+  return response.data;
+};
+
+export const ownerAdjustViews = async (viewer: string, image: string, newViews: number): Promise<SuccessResponse> => {
+  const response = await api.post<SuccessResponse>(`/api/owner/adjust/${viewer}/${image}`, {
+    new_views: newViews,
+  });
+  return response.data;
+};
+
+export const ownerRevokeAccess = async (viewer: string, image: string): Promise<SuccessResponse> => {
+  const response = await api.post<SuccessResponse>(`/api/owner/revoke/${viewer}/${image}`);
+  return response.data;
 };
 
 export default api;

@@ -263,6 +263,226 @@ pub async fn get_pending_requests(state: SharedClientState) -> Vec<PendingViewRe
     s.pending_view_requests.values().cloned().collect()
 }
 
+// ============================================================================
+// Phase 3.5: Adjust Request Approval/Rejection (Owner Side)
+// ============================================================================
+
+/// Approve viewer's adjust request and send new view count
+pub async fn approve_adjust_request(
+    state: SharedClientState,
+    request_id: u32,
+    approved_views: u32,
+) -> Result<()> {
+    // Get request details
+    let (viewer, image_name, viewer_addr) = {
+        let s = state.read().await;
+        let req = s.incoming_adjust_requests.get(&request_id)
+            .ok_or_else(|| anyhow::anyhow!("Adjust request {} not found", request_id))?;
+
+        (req.viewer.clone(), req.image_name.clone(), req.peer_addr)
+    };
+
+    println!("[P2P_OWNER] Approving adjust request: viewer={}, image={}, views={}",
+             viewer, image_name, approved_views);
+
+    // Update LocalAccessMap
+    {
+        let mut s = state.write().await;
+        s.local_access_map.adjust_views(&viewer, &image_name, approved_views);
+
+        // Save to disk
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            s.local_access_map.save_to_file(&path)?;
+        }
+
+        // Remove from incoming requests
+        s.incoming_adjust_requests.remove(&request_id);
+    }
+
+    // Get viewer's P2P port
+    let viewer_p2p_port = {
+        let s = state.read().await;
+        s.dos.clients.get(&viewer)
+            .map(|c| c.client_port)
+            .ok_or_else(|| anyhow::anyhow!("Viewer {} not in DOS", viewer))?
+    };
+
+    // Connect to viewer
+    let viewer_ip = viewer_addr.ip();
+    let viewer_p2p_addr = format!("{}:{}", viewer_ip, viewer_p2p_port);
+    let mut stream = tokio::net::TcpStream::connect(&viewer_p2p_addr).await?;
+
+    // Build payload: [image_name_len:u16][image_name][approved_views:u32]
+    let mut payload = Vec::new();
+
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+    payload.extend(approved_views.to_le_bytes());
+
+    // Send PEER_ADJUST_APPROVED
+    let total_len = 1 + payload.len();
+    stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+    stream.write_u8(crate::protocol::PEER_ADJUST_APPROVED).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+
+    println!("[P2P_OWNER] Sent PEER_ADJUST_APPROVED with {} views", approved_views);
+
+    Ok(())
+}
+
+/// Reject viewer's adjust request
+pub async fn reject_adjust_request(
+    state: SharedClientState,
+    request_id: u32,
+    reason: &str,
+) -> Result<()> {
+    // Get request details
+    let (viewer, image_name, viewer_addr) = {
+        let mut s = state.write().await;
+        let req = s.incoming_adjust_requests.remove(&request_id)
+            .ok_or_else(|| anyhow::anyhow!("Adjust request {} not found", request_id))?;
+
+        (req.viewer.clone(), req.image_name.clone(), req.peer_addr)
+    };
+
+    println!("[P2P_OWNER] Rejecting adjust request: viewer={}, image={}, reason={}",
+             viewer, image_name, reason);
+
+    // Get viewer's P2P port
+    let viewer_p2p_port = {
+        let s = state.read().await;
+        s.dos.clients.get(&viewer)
+            .map(|c| c.client_port)
+            .ok_or_else(|| anyhow::anyhow!("Viewer {} not in DOS", viewer))?
+    };
+
+    // Connect to viewer
+    let viewer_ip = viewer_addr.ip();
+    let viewer_p2p_addr = format!("{}:{}", viewer_ip, viewer_p2p_port);
+    let mut stream = tokio::net::TcpStream::connect(&viewer_p2p_addr).await?;
+
+    // Build payload: [image_name_len:u16][image_name][reason_len:u16][reason]
+    let mut payload = Vec::new();
+
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+
+    let reason_bytes = reason.as_bytes();
+    payload.extend((reason_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(reason_bytes);
+
+    // Send PEER_ADJUST_REJECTED
+    let total_len = 1 + payload.len();
+    stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+    stream.write_u8(crate::protocol::PEER_ADJUST_REJECTED).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+
+    println!("[P2P_OWNER] Sent PEER_ADJUST_REJECTED");
+
+    Ok(())
+}
+
+// ============================================================================
+// Phase 4.3: Owner-Initiated Adjust Order
+// ============================================================================
+
+/// Send PEER_ADJUST_ORDER to viewer (owner forcing view count change)
+pub async fn send_peer_adjust_order(
+    state: SharedClientState,
+    viewer: &str,
+    image_name: &str,
+    new_views: u32,
+) -> Result<()> {
+    println!("[P2P_OWNER] Sending adjust order: viewer={}, image={}, new_views={}",
+             viewer, image_name, new_views);
+
+    // Get viewer's P2P address
+    let (viewer_ip, viewer_port) = {
+        let s = state.read().await;
+        let viewer_client = s.dos.clients.get(viewer)
+            .ok_or_else(|| anyhow::anyhow!("Viewer {} not in DOS", viewer))?;
+
+        if !viewer_client.online {
+            return Err(anyhow::anyhow!("Viewer {} is offline", viewer));
+        }
+
+        (viewer_client.client_ip.clone(), viewer_client.client_port)
+    };
+
+    // Connect to viewer
+    let mut stream = tokio::net::TcpStream::connect(format!("{}:{}", viewer_ip, viewer_port)).await?;
+
+    // Build payload: [image_name_len:u16][image_name][new_views:u32]
+    let mut payload = Vec::new();
+
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+    payload.extend(new_views.to_le_bytes());
+
+    // Send PEER_ADJUST_ORDER
+    let total_len = 1 + payload.len();
+    stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+    stream.write_u8(crate::protocol::PEER_ADJUST_ORDER).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+
+    println!("[P2P_OWNER] Sent PEER_ADJUST_ORDER");
+
+    Ok(())
+}
+
+// ============================================================================
+// Phase 5.1: Owner-Initiated Revoke
+// ============================================================================
+
+/// Send PEER_REVOKE to viewer (owner revoking access)
+pub async fn send_peer_revoke(
+    state: SharedClientState,
+    viewer: &str,
+    image_name: &str,
+) -> Result<()> {
+    println!("[P2P_OWNER] Sending revoke: viewer={}, image={}", viewer, image_name);
+
+    // Get viewer's P2P address
+    let (viewer_ip, viewer_port) = {
+        let s = state.read().await;
+        let viewer_client = s.dos.clients.get(viewer)
+            .ok_or_else(|| anyhow::anyhow!("Viewer {} not in DOS", viewer))?;
+
+        if !viewer_client.online {
+            return Err(anyhow::anyhow!("Viewer {} is offline", viewer));
+        }
+
+        (viewer_client.client_ip.clone(), viewer_client.client_port)
+    };
+
+    // Connect to viewer
+    let mut stream = tokio::net::TcpStream::connect(format!("{}:{}", viewer_ip, viewer_port)).await?;
+
+    // Build payload: [image_name_len:u16][image_name]
+    let mut payload = Vec::new();
+
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+
+    // Send PEER_REVOKE
+    let total_len = 1 + payload.len();
+    stream.write_all(&(total_len as u32).to_le_bytes()).await?;
+    stream.write_u8(crate::protocol::PEER_REVOKE).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+
+    println!("[P2P_OWNER] Sent PEER_REVOKE");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

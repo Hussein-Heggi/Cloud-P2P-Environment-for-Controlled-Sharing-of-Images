@@ -49,9 +49,17 @@ pub const PEER_VIEW_REQUEST: u8 = 60;     // Viewer → Owner direct
 pub const PEER_VIEW_RESPONSE: u8 = 61;    // Owner → Viewer (approved)
 pub const PEER_VIEW_REJECTED: u8 = 62;    // Owner → Viewer (denied)
 pub const PEER_IMAGE_CHUNK: u8 = 63;      // Owner → Viewer (image data)
-pub const PEER_ADJUST_REQUEST: u8 = 64;   // Viewer → Owner (adjust views)
+pub const PEER_ADJUST_REQUEST: u8 = 64;   // Viewer → Owner (adjust views request)
 pub const PEER_REVOKE: u8 = 65;           // Owner → Viewer (revoke access)
 pub const PEER_ACK: u8 = 66;              // Generic acknowledgment
+
+// P2P Adjust and Revoke Messages
+pub const PEER_ADJUST_APPROVED: u8 = 67;       // Owner → Viewer (adjust approved)
+pub const PEER_ADJUST_REJECTED: u8 = 68;       // Owner → Viewer (adjust rejected)
+pub const PEER_ADJUST_ORDER: u8 = 69;          // Owner → Viewer (force view count change)
+pub const PEER_ADJUST_ORDER_ACK: u8 = 80;      // Viewer → Owner (adjustment confirmed)
+pub const PEER_ADJUST_ORDER_NOT_FOUND: u8 = 81; // Viewer → Owner (image not found)
+pub const PEER_REVOKE_ACK: u8 = 82;            // Viewer → Owner (revocation confirmed)
 
 // Server Offline/Access Map Messages (NEW for P2P architecture)
 pub const OFFLINE_REQUESTS_QUERY: u8 = 53;    // Client → Server on startup

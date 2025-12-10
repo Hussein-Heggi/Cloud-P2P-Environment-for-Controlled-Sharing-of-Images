@@ -126,9 +126,14 @@ export default function Dashboard() {
       <div className="container mx-auto px-4 py-6">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
-          <Link to="/downloads" className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md">
-            View Downloads
-          </Link>
+          <div className="flex space-x-3">
+            <Link to="/downloads" className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md">
+              View Downloads
+            </Link>
+            <Link to="/permissions" className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-md">
+              Permissions
+            </Link>
+          </div>
         </div>
 
         {/* Tabs */}
