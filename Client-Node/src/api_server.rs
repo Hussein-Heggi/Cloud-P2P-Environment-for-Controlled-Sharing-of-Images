@@ -630,6 +630,81 @@ async fn owner_revoke_access(
     Ok(Json(SuccessResponse { success: true }))
 }
 
+/// GET /api/incoming-adjust-requests - Get owner's incoming adjust requests
+#[derive(Debug, serde::Serialize)]
+struct IncomingAdjustRequestInfo {
+    request_id: u32,
+    viewer: String,
+    image_name: String,
+    requested_views: u32,
+    current_views: u32,
+    timestamp: u64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct IncomingAdjustRequestsResponse {
+    requests: Vec<IncomingAdjustRequestInfo>,
+}
+
+async fn get_incoming_adjust_requests(
+    State(api_state): State<ApiState>,
+) -> Json<IncomingAdjustRequestsResponse> {
+    let s = api_state.client_state.read().await;
+
+    let requests: Vec<IncomingAdjustRequestInfo> = s.incoming_adjust_requests.values()
+        .map(|r| IncomingAdjustRequestInfo {
+            request_id: r.request_id,
+            viewer: r.viewer.clone(),
+            image_name: r.image_name.clone(),
+            requested_views: r.requested_views,
+            current_views: r.current_views,
+            timestamp: r.timestamp,
+        })
+        .collect();
+
+    Json(IncomingAdjustRequestsResponse { requests })
+}
+
+/// POST /api/owner/approve-adjust/:request_id - Owner approves adjust request
+#[derive(Debug, serde::Deserialize)]
+struct ApproveAdjustPayload {
+    approved_views: u32,
+}
+
+async fn approve_adjust_request_endpoint(
+    State(api_state): State<ApiState>,
+    Path(request_id): Path<u32>,
+    Json(payload): Json<ApproveAdjustPayload>,
+) -> Result<Json<SuccessResponse>, (StatusCode, String)> {
+    crate::owner::approve_adjust_request(
+        api_state.client_state.clone(),
+        request_id,
+        payload.approved_views,
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(SuccessResponse { success: true }))
+}
+
+/// POST /api/owner/reject-adjust/:request_id - Owner rejects adjust request
+#[derive(Debug, serde::Deserialize)]
+struct RejectAdjustPayload {
+    reason: String,
+}
+
+async fn reject_adjust_request_endpoint(
+    State(api_state): State<ApiState>,
+    Path(request_id): Path<u32>,
+    Json(payload): Json<RejectAdjustPayload>,
+) -> Result<Json<SuccessResponse>, (StatusCode, String)> {
+    crate::owner::reject_adjust_request(
+        api_state.client_state.clone(),
+        request_id,
+        &payload.reason,
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(SuccessResponse { success: true }))
+}
+
 // ============================================================================
 // Server Setup
 // ============================================================================
@@ -672,6 +747,9 @@ pub async fn run_api_server(
         // Adjust and Revoke operations
         .route("/api/adjust-request/:owner/:image", post(request_adjust_views))
         .route("/api/local-access-map", get(get_local_access_map))
+        .route("/api/incoming-adjust-requests", get(get_incoming_adjust_requests))
+        .route("/api/owner/approve-adjust/:request_id", post(approve_adjust_request_endpoint))
+        .route("/api/owner/reject-adjust/:request_id", post(reject_adjust_request_endpoint))
         .route("/api/owner/adjust/:viewer/:image", post(owner_adjust_views))
         .route("/api/owner/revoke/:viewer/:image", post(owner_revoke_access))
         // Serve static files (images)

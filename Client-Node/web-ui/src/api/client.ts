@@ -115,6 +115,27 @@ export interface SuccessResponse {
   success: boolean;
 }
 
+export interface IncomingAdjustRequest {
+  request_id: number;
+  viewer: string;
+  image_name: string;
+  requested_views: number;
+  current_views: number;
+  timestamp: number;
+}
+
+export interface IncomingAdjustRequestsResponse {
+  requests: IncomingAdjustRequest[];
+}
+
+export interface ApproveAdjustPayload {
+  approved_views: number;
+}
+
+export interface RejectAdjustPayload {
+  reason: string;
+}
+
 // API Methods
 export const getStatus = async (): Promise<StatusResponse> => {
   const response = await api.get<StatusResponse>('/api/status');
@@ -202,6 +223,25 @@ export const ownerAdjustViews = async (viewer: string, image: string, newViews: 
 
 export const ownerRevokeAccess = async (viewer: string, image: string): Promise<SuccessResponse> => {
   const response = await api.post<SuccessResponse>(`/api/owner/revoke/${viewer}/${image}`);
+  return response.data;
+};
+
+export const getIncomingAdjustRequests = async (): Promise<IncomingAdjustRequestsResponse> => {
+  const response = await api.get<IncomingAdjustRequestsResponse>('/api/incoming-adjust-requests');
+  return response.data;
+};
+
+export const approveAdjustRequest = async (requestId: number, approvedViews: number): Promise<SuccessResponse> => {
+  const response = await api.post<SuccessResponse>(`/api/owner/approve-adjust/${requestId}`, {
+    approved_views: approvedViews,
+  });
+  return response.data;
+};
+
+export const rejectAdjustRequest = async (requestId: number, reason: string): Promise<SuccessResponse> => {
+  const response = await api.post<SuccessResponse>(`/api/owner/reject-adjust/${requestId}`, {
+    reason,
+  });
   return response.data;
 };
 
