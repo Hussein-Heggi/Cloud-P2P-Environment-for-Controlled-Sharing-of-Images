@@ -671,35 +671,53 @@ pub async fn run_listener(
 
             PENDING_REQUEST => {
                 // Phase 5B: Handle offline request delivery from server
-                // Wire format (NEW: includes requester P2P address):
-                // [viewer_name_len:u16][viewer_name][image_name_len:u16][image_name]
-                // [req_id:u32][requested_views:u32]
-                // [requester_ip_len:u16][requester_ip][requester_port:u16]
-                println!("[OWNER] 📬 PENDING_REQUEST received (offline request delivery)");
+                // Wire format (supports VIEW, ADJUST, REVOKE):
+                // [request_type_len:u16][request_type]
+                // [requester_len:u16][requester]
+                // [image_name_len:u16][image_name]
+                // [request_id:u32]          // Only for VIEW/ADJUST
+                // [requested_views:u32]     // Only for VIEW/ADJUST
+                // [requester_ip_len:u16][requester_ip]
+                // [requester_port:u16]
+                println!("[CLIENT] 📬 PENDING_REQUEST received (offline request delivery)");
 
                 let mut offset = 0;
 
+                // Parse request type
                 if data.len() < offset + 2 {
-                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: too short");
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: too short for request_type");
                     continue;
                 }
-
-                let viewer_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                let type_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
                 offset += 2;
 
-                if data.len() < offset + viewer_len {
-                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: invalid viewer name length");
+                if data.len() < offset + type_len {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: invalid request_type length");
                     continue;
                 }
+                let request_type = String::from_utf8(data[offset..offset + type_len].to_vec())?;
+                offset += type_len;
 
-                let viewer_name = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
-                offset += viewer_len;
+                // Parse requester name
+                if data.len() < offset + 2 {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: too short for requester");
+                    continue;
+                }
+                let requester_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+                offset += 2;
 
+                if data.len() < offset + requester_len {
+                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: invalid requester name length");
+                    continue;
+                }
+                let requester_name = String::from_utf8(data[offset..offset + requester_len].to_vec())?;
+                offset += requester_len;
+
+                // Parse image name
                 if data.len() < offset + 2 {
                     println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no image name length");
                     continue;
                 }
-
                 let image_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
                 offset += 2;
 
@@ -707,26 +725,31 @@ pub async fn run_listener(
                     println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: invalid image name length");
                     continue;
                 }
-
                 let image_name = String::from_utf8(data[offset..offset + image_len].to_vec())?;
                 offset += image_len;
 
-                if data.len() < offset + 4 {
-                    println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no request ID");
-                    continue;
-                }
+                // Parse request_id and requested_views (only for VIEW/ADJUST)
+                let (req_id, requested_views) = if request_type == "VIEW" || request_type == "ADJUST" {
+                    if data.len() < offset + 4 {
+                        println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no request ID");
+                        continue;
+                    }
+                    let id = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+                    offset += 4;
 
-                let req_id = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
-                offset += 4;
+                    if data.len() < offset + 4 {
+                        println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no requested_views");
+                        continue;
+                    }
+                    let views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+                    offset += 4;
 
-                let requested_views = if data.len() >= offset + 4 {
-                    u32::from_le_bytes(data[offset..offset + 4].try_into()?)
+                    (id, views)
                 } else {
-                    0
+                    (0, 0)  // Not used for REVOKE
                 };
-                offset += 4;
 
-                // NEW: Parse requester's P2P address
+                // Parse requester's P2P address
                 let peer_addr = if data.len() >= offset + 2 {
                     let ip_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
                     offset += 2;
@@ -738,51 +761,119 @@ pub async fn run_listener(
                         let requester_port = u16::from_le_bytes(data[offset..offset + 2].try_into()?);
 
                         let addr_str = format!("{}:{}", requester_ip, requester_port);
-                        println!("[OWNER] 📍 Requester P2P address: {}", addr_str);
+                        println!("[CLIENT] 📍 Requester P2P address: {}", addr_str);
                         addr_str.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap())
                     } else {
-                        println!("[OWNER] ⚠️  Incomplete requester address, using fallback");
+                        println!("[CLIENT] ⚠️  Incomplete requester address, using fallback");
                         "0.0.0.0:0".parse().unwrap()
                     }
                 } else {
-                    println!("[OWNER] ⚠️  No requester address in payload (old format?), using fallback");
+                    println!("[CLIENT] ⚠️  No requester address in payload, using fallback");
                     "0.0.0.0:0".parse().unwrap()
                 };
 
-                println!("\n╔═══════════════════════════════════════════════════════════╗");
-                println!("║  📬 OFFLINE REQUEST DELIVERED BY SERVER                  ║");
-                println!("╠═══════════════════════════════════════════════════════════╣");
-                println!("║  Request ID: {}                                    ║", req_id);
-                println!("║  From:       {}                                          ║", viewer_name);
-                println!("║  Image:      {}                                         ║", image_name);
-                println!("║  Views:      {}                                              ║", requested_views);
-                println!("║  Peer Addr:  {}                                     ║", peer_addr);
-                println!("╠═══════════════════════════════════════════════════════════╣");
-                println!("║  This request was made while you were offline.            ║");
-                println!("║  Use CLI commands to approve/deny:                        ║");
-                println!("║    approve_p2p <request_id>                               ║");
-                println!("║    deny_p2p <request_id>                                  ║");
-                println!("╚═══════════════════════════════════════════════════════════╝\n");
+                // Handle based on request type
+                match request_type.as_str() {
+                    "VIEW" => {
+                        println!("\n╔═══════════════════════════════════════════════════════════╗");
+                        println!("║  📬 OFFLINE VIEW REQUEST DELIVERED BY SERVER             ║");
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  Request ID: {}                                    ║", req_id);
+                        println!("║  From:       {}                                          ║", requester_name);
+                        println!("║  Image:      {}                                         ║", image_name);
+                        println!("║  Views:      {}                                              ║", requested_views);
+                        println!("║  Peer Addr:  {}                                     ║", peer_addr);
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  This request was made while you were offline.            ║");
+                        println!("║  Use CLI commands to approve/deny:                        ║");
+                        println!("║    approve_p2p <request_id>                               ║");
+                        println!("║    deny_p2p <request_id>                                  ║");
+                        println!("╚═══════════════════════════════════════════════════════════╝\n");
 
-                // Store in pending requests with actual peer address
-                let pending_req = crate::owner::PendingViewRequest {
-                    request_id: req_id,
-                    viewer: viewer_name.clone(),
-                    image_name: image_name.clone(),
-                    requested_views,
-                    peer_addr,  // Now has actual viewer's P2P address!
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                };
+                        let pending_req = crate::owner::PendingViewRequest {
+                            request_id: req_id,
+                            viewer: requester_name.clone(),
+                            image_name: image_name.clone(),
+                            requested_views,
+                            peer_addr,
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        };
 
-                {
-                    let mut s = state.write().await;
-                    s.pending_view_requests.insert(req_id, pending_req);
+                        let mut s = state.write().await;
+                        s.pending_view_requests.insert(req_id, pending_req);
+                        println!("[OWNER] Stored offline VIEW request in pending queue");
+                    }
+                    "ADJUST" => {
+                        println!("\n╔═══════════════════════════════════════════════════════════╗");
+                        println!("║  📬 OFFLINE ADJUST REQUEST DELIVERED BY SERVER           ║");
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  Request ID: {}                                    ║", req_id);
+                        println!("║  From:       {}                                          ║", requester_name);
+                        println!("║  Image:      {}                                         ║", image_name);
+                        println!("║  Views:      {}                                              ║", requested_views);
+                        println!("║  Peer Addr:  {}                                     ║", peer_addr);
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  This adjust request was made while you were offline.     ║");
+                        println!("║  Use /api/incoming-adjust-requests to view details        ║");
+                        println!("╚═══════════════════════════════════════════════════════════╝\n");
+
+                        let pending_req = crate::simple_client::PendingAdjustRequest {
+                            request_id: req_id,
+                            owner: requester_name.clone(),  // Note: "owner" field is reused to store viewer name
+                            image_name: image_name.clone(),
+                            requested_views,
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        };
+
+                        let mut s = state.write().await;
+                        s.pending_adjust_requests.insert(req_id, pending_req);
+                        println!("[OWNER] Stored offline ADJUST request in pending queue");
+                    }
+                    "REVOKE" => {
+                        println!("\n╔═══════════════════════════════════════════════════════════╗");
+                        println!("║  ❌ REVOKE NOTIFICATION DELIVERED BY SERVER              ║");
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  From:       {}                                          ║", requester_name);
+                        println!("║  Image:      {}                                         ║", image_name);
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  Owner {} has REVOKED your access to this image.   ║", requester_name);
+                        println!("║  Removing from your access map...                         ║");
+                        println!("╚═══════════════════════════════════════════════════════════╝\n");
+
+                        // Remove from viewer's access map (load from file, modify, save)
+                        use crate::viewer::ViewerAccessMap;
+
+                        let map_path = ViewerAccessMap::default_path()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("viewer_access_map.json"));
+
+                        let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+                            .unwrap_or_else(|_| ViewerAccessMap::new());
+
+                        if viewer_map.remove_grant(&requester_name, &image_name) {
+                            println!("[VIEWER] 🗑️  Removed {} access to '{}' from ViewerAccessMap (revoked by owner)",
+                                     requester_name, image_name);
+
+                            // Save to disk
+                            if let Err(e) = viewer_map.save_to_file(&map_path).await {
+                                eprintln!("[VIEWER] Failed to save ViewerAccessMap: {}", e);
+                            } else {
+                                println!("[VIEWER] ✅ ViewerAccessMap saved successfully");
+                            }
+                        } else {
+                            println!("[VIEWER] ⚠️  Entry for {} on '{}' not found in ViewerAccessMap",
+                                     requester_name, image_name);
+                        }
+                    }
+                    _ => {
+                        println!("[CLIENT] ⚠️  Unknown request type: {}", request_type);
+                    }
                 }
-
-                println!("[OWNER] Stored offline request in pending queue with peer address: {}", peer_addr);
             }
 
             DOS_UPDATE => {

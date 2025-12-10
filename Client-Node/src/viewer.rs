@@ -234,6 +234,64 @@ pub async fn send_view_request(
     Ok(request_id)
 }
 
+/// Send ADJUST_REQUEST to server (server-mediated fallback)
+/// Format: [req_id:u32][viewer_len:u16][viewer][owner_len:u16][owner][image_len:u16][image][requested_views:u32]
+pub async fn send_adjust_request(
+    state: SharedClientState,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    owner: String,
+    image_name: String,
+    requested_views: u32,
+) -> Result<u32> {
+    // Generate unique request ID
+    let request_id = rand::random::<u32>();
+
+    let viewer = {
+        let s = state.read().await;
+        s.username.clone()
+    };
+
+    println!("[VIEWER] Sending server-mediated ADJUST_REQUEST: req_id={}, owner={}, image={}, views={}",
+             request_id, owner, image_name, requested_views);
+
+    // Build payload (same format as VIEW_REQUEST)
+    let mut payload = Vec::new();
+
+    // Request ID
+    payload.extend(request_id.to_le_bytes());
+
+    // Viewer name
+    let viewer_bytes = viewer.as_bytes();
+    payload.extend((viewer_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(viewer_bytes);
+
+    // Owner name
+    let owner_bytes = owner.as_bytes();
+    payload.extend((owner_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(owner_bytes);
+
+    // Image name
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+
+    // Requested views
+    payload.extend(requested_views.to_le_bytes());
+
+    // Send ADJUST_REQUEST
+    {
+        let mut w = writer.lock().await;
+        w.write_all(&(payload.len() as u32 + 1).to_le_bytes()).await?;
+        w.write_u8(ADJUST_REQUEST).await?;
+        w.write_all(&payload).await?;
+        w.flush().await?;
+    }
+
+    println!("[VIEWER] Server-mediated ADJUST_REQUEST sent (req_id={})", request_id);
+
+    Ok(request_id)
+}
+
 // ============================================================================
 // Phase 5A: Smart Request Routing (P2P if online, Server if offline)
 // ============================================================================
@@ -288,6 +346,70 @@ pub async fn request_image_access(
         // Owner is offline → Use server-mediated flow directly (Case 1)
         println!("[REQUEST] 🔴 Owner {} is OFFLINE - using server-mediated flow", owner);
         send_view_request(
+            state,
+            writer,
+            owner.to_string(),
+            image_name.to_string(),
+            requested_views,
+        ).await
+    }
+}
+
+/// Smart adjust request routing: Try P2P if owner online, fallback to server if offline/TCP fails
+/// This is the main entry point for requesting view count adjustment
+pub async fn request_adjust_views(
+    state: SharedClientState,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    owner: &str,
+    image_name: &str,
+    requested_views: u32,
+) -> Result<u32> {
+    // Check DOS for owner's online status and connection info
+    let (owner_online, owner_ip, owner_port) = {
+        let s = state.read().await;
+
+        // Find owner in DOS-C
+        let owner_client = s.dos.clients.get(owner);
+        let is_online = if let Some(oc) = owner_client {
+            oc.online && oc.client_ip != "0.0.0.0" && oc.client_port != 0
+        } else {
+            false
+        };
+
+        let (ip, port) = if let Some(oc) = owner_client {
+            (oc.client_ip.clone(), oc.client_port)
+        } else {
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_online, ip, port)
+    };
+
+    if owner_online {
+        // Owner appears online → Try P2P first (Case 2)
+        println!("[ADJUST] 🟢 Owner {} appears ONLINE at {}:{} - attempting P2P", owner, owner_ip, owner_port);
+        match send_peer_adjust_request(state.clone(), owner, image_name, requested_views).await {
+            Ok(req_id) => {
+                println!("[ADJUST] ✅ P2P connection succeeded");
+                Ok(req_id)
+            }
+            Err(e) => {
+                // TCP connection failed - fallback to server-mediated (Case 2)
+                println!("[ADJUST] ⚠️  P2P connection failed: {}", e);
+                println!("[ADJUST] 🔄 Falling back to server-mediated offline request");
+                send_adjust_request(
+                    state,
+                    writer,
+                    owner.to_string(),
+                    image_name.to_string(),
+                    requested_views,
+                ).await
+            }
+        }
+    } else {
+        // Owner is offline → Use server-mediated flow directly (Case 1)
+        println!("[ADJUST] 🔴 Owner {} is OFFLINE - using server-mediated flow", owner);
+        send_adjust_request(
             state,
             writer,
             owner.to_string(),

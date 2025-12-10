@@ -530,6 +530,134 @@ pub async fn send_peer_revoke(
     Ok(())
 }
 
+/// Send REVOKE_REQUEST to server (server-mediated fallback)
+/// Format: [owner_len:u16][owner][viewer_len:u16][viewer][image_len:u16][image]
+pub async fn send_revoke_request(
+    state: SharedClientState,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    viewer: String,
+    image_name: String,
+) -> Result<()> {
+    let owner = {
+        let s = state.read().await;
+        s.username.clone()
+    };
+
+    println!("[OWNER] Sending server-mediated REVOKE_REQUEST: viewer={}, image={}",
+             viewer, image_name);
+
+    // Build payload
+    let mut payload = Vec::new();
+
+    // Owner name
+    let owner_bytes = owner.as_bytes();
+    payload.extend((owner_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(owner_bytes);
+
+    // Viewer name
+    let viewer_bytes = viewer.as_bytes();
+    payload.extend((viewer_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(viewer_bytes);
+
+    // Image name
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+
+    // Send REVOKE_REQUEST
+    {
+        let mut w = writer.lock().await;
+        w.write_all(&(payload.len() as u32 + 1).to_le_bytes()).await?;
+        w.write_u8(REVOKE_REQUEST).await?;
+        w.write_all(&payload).await?;
+        w.flush().await?;
+    }
+
+    println!("[OWNER] Server-mediated REVOKE_REQUEST sent");
+
+    // Remove from LocalAccessMap on owner side
+    {
+        let mut s = state.write().await;
+        if s.local_access_map.revoke_access(&viewer, &image_name) {
+            println!("[OWNER] 🗑️  Removed {} access to '{}' from LocalAccessMap (revoked)",
+                     viewer, image_name);
+        } else {
+            println!("[OWNER] ⚠️  Entry for {} on '{}' not found in LocalAccessMap",
+                     viewer, image_name);
+        }
+
+        // Save to disk
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            if let Err(e) = s.local_access_map.save_to_file(&path) {
+                eprintln!("[OWNER] Failed to save LocalAccessMap: {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Smart revoke routing: Try P2P if viewer online, fallback to server if offline/TCP fails
+/// This is the main entry point for revoking access
+pub async fn revoke_access(
+    state: SharedClientState,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    viewer: &str,
+    image_name: &str,
+) -> Result<()> {
+    // Check DOS for viewer's online status and connection info
+    let (viewer_online, viewer_ip, viewer_port) = {
+        let s = state.read().await;
+
+        // Find viewer in DOS-C
+        let viewer_client = s.dos.clients.get(viewer);
+        let is_online = if let Some(vc) = viewer_client {
+            vc.online && vc.client_ip != "0.0.0.0" && vc.client_port != 0
+        } else {
+            false
+        };
+
+        let (ip, port) = if let Some(vc) = viewer_client {
+            (vc.client_ip.clone(), vc.client_port)
+        } else {
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_online, ip, port)
+    };
+
+    if viewer_online {
+        // Viewer appears online → Try P2P first (Case 2)
+        println!("[REVOKE] 🟢 Viewer {} appears ONLINE at {}:{} - attempting P2P", viewer, viewer_ip, viewer_port);
+        match send_peer_revoke(state.clone(), viewer, image_name).await {
+            Ok(()) => {
+                println!("[REVOKE] ✅ P2P connection succeeded");
+                Ok(())
+            }
+            Err(e) => {
+                // TCP connection failed - fallback to server-mediated (Case 2)
+                println!("[REVOKE] ⚠️  P2P connection failed: {}", e);
+                println!("[REVOKE] 🔄 Falling back to server-mediated offline request");
+                send_revoke_request(
+                    state,
+                    writer,
+                    viewer.to_string(),
+                    image_name.to_string(),
+                ).await
+            }
+        }
+    } else {
+        // Viewer is offline → Use server-mediated flow directly (Case 1)
+        println!("[REVOKE] 🔴 Viewer {} is OFFLINE - using server-mediated flow", viewer);
+        send_revoke_request(
+            state,
+            writer,
+            viewer.to_string(),
+            image_name.to_string(),
+        ).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

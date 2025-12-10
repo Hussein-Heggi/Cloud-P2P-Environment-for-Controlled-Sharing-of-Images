@@ -525,8 +525,10 @@ async fn request_adjust_views(
     Path((owner, image_name)): Path<(String, String)>,
     Json(payload): Json<AdjustRequestPayload>,
 ) -> Result<Json<AdjustRequestResponse>, (StatusCode, String)> {
-    let request_id = crate::viewer::send_peer_adjust_request(
+    // Use smart routing (P2P if online, server-mediated if offline/TCP fails)
+    let request_id = crate::viewer::request_adjust_views(
         api_state.client_state.clone(),
+        api_state.writer.clone(),
         &owner,
         &image_name,
         payload.requested_views,
@@ -621,8 +623,10 @@ async fn owner_revoke_access(
     State(api_state): State<ApiState>,
     Path((viewer, image_name)): Path<(String, String)>,
 ) -> Result<Json<SuccessResponse>, (StatusCode, String)> {
-    crate::owner::send_peer_revoke(
+    // Use smart routing (P2P if online, server-mediated if offline/TCP fails)
+    crate::owner::revoke_access(
         api_state.client_state.clone(),
+        api_state.writer.clone(),
         &viewer,
         &image_name,
     ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

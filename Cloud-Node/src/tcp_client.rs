@@ -246,6 +246,16 @@ async fn route_client_message(
             handle_view_request_tcp(state, &cfg, stream, peer_addr, payload).await
         }
 
+        x if x == client_protocol::ADJUST_REQUEST => {
+            info!(%peer_addr, len=payload.len(), "Received ADJUST_REQUEST from client (offline request)");
+            handle_adjust_request_tcp(state, &cfg, stream, peer_addr, payload.to_vec()).await
+        }
+
+        x if x == client_protocol::REVOKE_REQUEST => {
+            info!(%peer_addr, len=payload.len(), "Received REVOKE_REQUEST from client (offline request)");
+            handle_revoke_request_tcp(state, &cfg, stream, peer_addr, payload.to_vec()).await
+        }
+
         x if x == client_protocol::OWNER_IMAGE_META => {
             info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_META from client");
             handle_owner_image_meta(state, payload).await
@@ -537,29 +547,45 @@ async fn handle_join_tcp(
 
                     // Send each request to client
                     for req in requests {
-                        // Format: PENDING_REQUEST message (NEW: includes requester P2P address)
-                        // [requester_len:u16][requester][image_name_len:u16][image_name]
-                        // [request_id:u32][requested_views:u32]
-                        // [requester_ip_len:u16][requester_ip][requester_port:u16]
+                        // Format: PENDING_REQUEST message (supports VIEW, ADJUST, REVOKE)
+                        // [request_type_len:u16][request_type]
+                        // [requester_len:u16][requester]
+                        // [image_name_len:u16][image_name]
+                        // [request_id:u32]          // Only for VIEW/ADJUST
+                        // [requested_views:u32]     // Only for VIEW/ADJUST
+                        // [requester_ip_len:u16][requester_ip]
+                        // [requester_port:u16]
                         let mut payload = Vec::new();
+
+                        // Request type
+                        payload.extend((req.request_type.len() as u16).to_le_bytes());
+                        payload.extend(req.request_type.as_bytes());
+
+                        // Requester
                         payload.extend((req.requester.len() as u16).to_le_bytes());
                         payload.extend(req.requester.as_bytes());
+
+                        // Image name
                         payload.extend((req.image_name.len() as u16).to_le_bytes());
                         payload.extend(req.image_name.as_bytes());
-                        payload.extend(req.request_id.to_le_bytes());
-                        payload.extend(req.requested_views.to_le_bytes());
 
-                        // NEW: Include requester's P2P address
+                        // Request ID and requested views (only for VIEW/ADJUST)
+                        if req.request_type == "VIEW" || req.request_type == "ADJUST" {
+                            payload.extend(req.request_id.to_le_bytes());
+                            payload.extend(req.requested_views.to_le_bytes());
+                        }
+
+                        // Requester's P2P address
                         payload.extend((req.requester_ip.len() as u16).to_le_bytes());
                         payload.extend(req.requester_ip.as_bytes());
                         payload.extend(req.requester_port.to_le_bytes());
 
                         // Send to client
                         if let Err(e) = send_tcp_response(stream.clone(), client_protocol::PENDING_REQUEST, &payload).await {
-                            warn!("Failed to send pending request to {}: {}", username, e);
+                            warn!("Failed to send pending {} request to {}: {}", req.request_type, username, e);
                         } else {
-                            println!("[JOIN] ✅ Sent pending request from {} ({}:{}) to {}",
-                                     req.requester, req.requester_ip, req.requester_port, username);
+                            println!("[JOIN] ✅ Sent pending {} request from {} ({}:{}) to {}",
+                                     req.request_type, req.requester, req.requester_ip, req.requester_port, username);
                         }
                     }
                 }
@@ -737,8 +763,9 @@ async fn handle_view_request_tcp(
 
     // Create OfflineRequest struct with viewer's P2P address
     let offline_request = crate::firebase::OfflineRequest {
+        request_type: "VIEW".to_string(),
         requester: viewer.clone(),
-        owner: owner.clone(),
+        recipient: owner.clone(),
         image_name: image_name.clone(),
         request_id,
         requested_views,
@@ -762,6 +789,302 @@ async fn handle_view_request_tcp(
         }
         Err(e) => {
             error!("[VIEW_REQUEST] ❌ Failed to save offline request to Firebase: {}", e);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle ADJUST_REQUEST: Viewer requests view count adjustment from offline owner
+/// Payload format: [req_id:u32][viewer_len:u16][viewer][owner_len:u16][owner][image_len:u16][image][requested_views:u32]
+async fn handle_adjust_request_tcp(
+    state: SharedState,
+    cfg: &crate::config::Config,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    payload: Vec<u8>,
+) -> Result<()> {
+    println!("[ADJUST_REQUEST] 📨 Received ADJUST_REQUEST from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse request_id
+    if payload.len() < offset + 4 {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for request_id");
+        return Ok(());
+    }
+    let request_id = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
+    offset += 4;
+
+    // Parse viewer name
+    if payload.len() < offset + 2 {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for viewer length");
+        return Ok(());
+    }
+    let viewer_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + viewer_len {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for viewer name");
+        return Ok(());
+    }
+    let viewer = String::from_utf8_lossy(&payload[offset..offset + viewer_len]).to_string();
+    offset += viewer_len;
+
+    // Parse owner name
+    if payload.len() < offset + 2 {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for owner length");
+        return Ok(());
+    }
+    let owner_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + owner_len {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for owner name");
+        return Ok(());
+    }
+    let owner = String::from_utf8_lossy(&payload[offset..offset + owner_len]).to_string();
+    offset += owner_len;
+
+    // Parse image name
+    if payload.len() < offset + 2 {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for image length");
+        return Ok(());
+    }
+    let image_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + image_len {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for image name");
+        return Ok(());
+    }
+    let image_name = String::from_utf8_lossy(&payload[offset..offset + image_len]).to_string();
+    offset += image_len;
+
+    // Parse requested views
+    if payload.len() < offset + 4 {
+        warn!("[ADJUST_REQUEST] ❌ Payload too short for requested_views");
+        return Ok(());
+    }
+    let requested_views = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
+
+    println!("[ADJUST_REQUEST] 📝 Parsed: req_id={}, viewer={}, owner={}, image={}, views={}",
+             request_id, viewer, owner, image_name, requested_views);
+
+    // Check if I'm the executor and get firestore handle + viewer's P2P address
+    let (is_executor, firestore_db, viewer_ip, viewer_port) = {
+        let s = state.read().await;
+        let my_ip = cfg.service_bind_addr()
+            .expect("service_bind_addr not configured")
+            .ip();
+
+        let is_exec = if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            exec_ip == &my_ip && now <= deadline
+        } else {
+            false
+        };
+
+        // Look up viewer's P2P address from DOS
+        let (v_ip, v_port) = if let Some(viewer_client) = s.dos_clients.get(&viewer) {
+            println!("[ADJUST_REQUEST] 📍 Found viewer {} in DOS: ip={}, port={}",
+                     viewer, viewer_client.client_ip, viewer_client.client_port);
+            (viewer_client.client_ip.clone(), viewer_client.client_port)
+        } else {
+            println!("[ADJUST_REQUEST] ⚠️  Viewer {} not found in DOS, using fallback address", viewer);
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_exec, s.firestore_db.clone(), v_ip, v_port)
+    };
+
+    if !is_executor {
+        println!("[ADJUST_REQUEST] ⏭️  Not executor, skipping Firebase write");
+        return Ok(());
+    }
+
+    println!("[ADJUST_REQUEST] ✅ I am executor - saving offline ADJUST request to Firebase");
+
+    let db = match firestore_db {
+        Some(db) => db,
+        None => {
+            warn!("[ADJUST_REQUEST] ❌ Firestore not initialized, cannot save offline request");
+            return Ok(());
+        }
+    };
+
+    // Create OfflineRequest struct with viewer's P2P address
+    let offline_request = crate::firebase::OfflineRequest {
+        request_type: "ADJUST".to_string(),
+        requester: viewer.clone(),
+        recipient: owner.clone(),
+        image_name: image_name.clone(),
+        request_id,
+        requested_views,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+        requester_ip: viewer_ip.clone(),
+        requester_port: viewer_port,
+    };
+
+    println!("[ADJUST_REQUEST] 💾 Storing with viewer P2P address: {}:{}", viewer_ip, viewer_port);
+
+    // Save to Firebase (recipient is owner for ADJUST)
+    match crate::firebase::add_offline_request(&db, &owner, offline_request).await {
+        Ok(_) => {
+            println!("[ADJUST_REQUEST] ✅ Saved offline request to Firebase: {} → {} ({})",
+                     viewer, owner, image_name);
+            println!("[ADJUST_REQUEST] 📦 Request will be delivered when {} comes online (JOIN)",
+                     owner);
+        }
+        Err(e) => {
+            error!("[ADJUST_REQUEST] ❌ Failed to save offline request to Firebase: {}", e);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle REVOKE_REQUEST: Owner revokes access from offline viewer
+/// Payload format: [owner_len:u16][owner][viewer_len:u16][viewer][image_len:u16][image]
+async fn handle_revoke_request_tcp(
+    state: SharedState,
+    cfg: &crate::config::Config,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    payload: Vec<u8>,
+) -> Result<()> {
+    println!("[REVOKE_REQUEST] 📨 Received REVOKE_REQUEST from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse owner name
+    if payload.len() < offset + 2 {
+        warn!("[REVOKE_REQUEST] ❌ Payload too short for owner length");
+        return Ok(());
+    }
+    let owner_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + owner_len {
+        warn!("[REVOKE_REQUEST] ❌ Payload too short for owner name");
+        return Ok(());
+    }
+    let owner = String::from_utf8_lossy(&payload[offset..offset + owner_len]).to_string();
+    offset += owner_len;
+
+    // Parse viewer name
+    if payload.len() < offset + 2 {
+        warn!("[REVOKE_REQUEST] ❌ Payload too short for viewer length");
+        return Ok(());
+    }
+    let viewer_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + viewer_len {
+        warn!("[REVOKE_REQUEST] ❌ Payload too short for viewer name");
+        return Ok(());
+    }
+    let viewer = String::from_utf8_lossy(&payload[offset..offset + viewer_len]).to_string();
+    offset += viewer_len;
+
+    // Parse image name
+    if payload.len() < offset + 2 {
+        warn!("[REVOKE_REQUEST] ❌ Payload too short for image length");
+        return Ok(());
+    }
+    let image_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + image_len {
+        warn!("[REVOKE_REQUEST] ❌ Payload too short for image name");
+        return Ok(());
+    }
+    let image_name = String::from_utf8_lossy(&payload[offset..offset + image_len]).to_string();
+
+    println!("[REVOKE_REQUEST] 📝 Parsed: owner={}, viewer={}, image={}",
+             owner, viewer, image_name);
+
+    // Check if I'm the executor and get firestore handle + owner's P2P address
+    let (is_executor, firestore_db, owner_ip, owner_port) = {
+        let s = state.read().await;
+        let my_ip = cfg.service_bind_addr()
+            .expect("service_bind_addr not configured")
+            .ip();
+
+        let is_exec = if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            exec_ip == &my_ip && now <= deadline
+        } else {
+            false
+        };
+
+        // Look up owner's P2P address from DOS (requester for REVOKE)
+        let (o_ip, o_port) = if let Some(owner_client) = s.dos_clients.get(&owner) {
+            println!("[REVOKE_REQUEST] 📍 Found owner {} in DOS: ip={}, port={}",
+                     owner, owner_client.client_ip, owner_client.client_port);
+            (owner_client.client_ip.clone(), owner_client.client_port)
+        } else {
+            println!("[REVOKE_REQUEST] ⚠️  Owner {} not found in DOS, using fallback address", owner);
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_exec, s.firestore_db.clone(), o_ip, o_port)
+    };
+
+    if !is_executor {
+        println!("[REVOKE_REQUEST] ⏭️  Not executor, skipping Firebase write");
+        return Ok(());
+    }
+
+    println!("[REVOKE_REQUEST] ✅ I am executor - saving offline REVOKE request to Firebase");
+
+    let db = match firestore_db {
+        Some(db) => db,
+        None => {
+            warn!("[REVOKE_REQUEST] ❌ Firestore not initialized, cannot save offline request");
+            return Ok(());
+        }
+    };
+
+    // Create OfflineRequest struct with owner's P2P address (requester = owner)
+    let offline_request = crate::firebase::OfflineRequest {
+        request_type: "REVOKE".to_string(),
+        requester: owner.clone(),    // Owner is the requester
+        recipient: viewer.clone(),    // Viewer is the recipient
+        image_name: image_name.clone(),
+        request_id: 0,  // Not used for REVOKE
+        requested_views: 0,  // Not used for REVOKE
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+        requester_ip: owner_ip.clone(),
+        requester_port: owner_port,
+    };
+
+    println!("[REVOKE_REQUEST] 💾 Storing with owner P2P address: {}:{}", owner_ip, owner_port);
+
+    // Save to Firebase (recipient is viewer for REVOKE)
+    match crate::firebase::add_offline_request(&db, &viewer, offline_request).await {
+        Ok(_) => {
+            println!("[REVOKE_REQUEST] ✅ Saved offline request to Firebase: {} → {} ({})",
+                     owner, viewer, image_name);
+            println!("[REVOKE_REQUEST] 📦 Request will be delivered when {} comes online (JOIN)",
+                     viewer);
+        }
+        Err(e) => {
+            error!("[REVOKE_REQUEST] ❌ Failed to save offline request to Firebase: {}", e);
             return Err(e);
         }
     }

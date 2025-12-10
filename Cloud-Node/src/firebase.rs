@@ -21,16 +21,20 @@ pub struct DosClient {
     pub online: bool,
 }
 
-/// Offline request - pending access request for offline owner
+/// Offline request - pending access request for offline owner/viewer
+/// Supports VIEW, ADJUST, and REVOKE request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OfflineRequest {
-    pub requester: String,
-    pub owner: String,
+    pub request_type: String,  // "VIEW", "ADJUST", or "REVOKE"
+    pub requester: String,      // For VIEW/ADJUST: viewer, For REVOKE: owner
+    pub recipient: String,      // For VIEW/ADJUST: owner, For REVOKE: viewer
     pub image_name: String,
-    pub request_id: u32,
-    pub requested_views: u32,
+    #[serde(default)]
+    pub request_id: u32,       // Only used for VIEW/ADJUST
+    #[serde(default)]
+    pub requested_views: u32,  // Only used for VIEW/ADJUST
     pub timestamp: u64,
-    // NEW: Store requester's P2P address so owner can connect back
+    // NEW: Store requester's P2P address so recipient can connect back
     pub requester_ip: String,
     pub requester_port: u16,
 }
@@ -203,9 +207,10 @@ pub async fn read_client(db: &FirestoreDb, client_name: &str) -> Result<Option<D
 // REMOVED Phase 2: read_all_access - Access map now managed locally by clients only
 
 /// Leader-only: Add offline request
+/// recipient is the person who will receive the request (owner for VIEW/ADJUST, viewer for REVOKE)
 pub async fn add_offline_request(
     db: &FirestoreDb,
-    owner: &str,
+    recipient: &str,
     request: OfflineRequest
 ) -> Result<()> {
     let mut doc: OfflineRequestsDoc = match db
@@ -213,12 +218,12 @@ pub async fn add_offline_request(
         .select()
         .by_id_in("offline_requests_map")
         .obj()
-        .one(owner)
+        .one(recipient)
         .await
     {
         Ok(Some(d)) => d,
         _ => OfflineRequestsDoc {
-            owner: owner.to_string(),
+            owner: recipient.to_string(),
             requests: Vec::new(),
         },
     };
@@ -229,7 +234,7 @@ pub async fn add_offline_request(
     let update_result = db.fluent()
         .update()
         .in_col("offline_requests_map")
-        .document_id(owner)
+        .document_id(recipient)
         .object(&doc)
         .execute::<()>()
         .await;
@@ -239,7 +244,7 @@ pub async fn add_offline_request(
         db.fluent()
             .insert()
             .into("offline_requests_map")
-            .document_id(owner)
+            .document_id(recipient)
             .object(&doc)
             .execute::<()>()
             .await?;
