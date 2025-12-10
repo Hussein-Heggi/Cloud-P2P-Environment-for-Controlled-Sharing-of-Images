@@ -549,8 +549,8 @@ async fn handle_peer_image_chunk(
 
             println!("[P2P_VIEWER] 📦 Assembled image: {} bytes", full_image.len());
 
-            // Save to encrypted_storage/
-            let encrypted_dir = std::path::Path::new("encrypted_storage");
+            // Save to client_images/ (viewer receiving from owner via P2P)
+            let encrypted_dir = std::path::Path::new("client_images");
             tokio::fs::create_dir_all(encrypted_dir).await?;
 
             let filename = format!("{}.png", pending.image_name.trim_end_matches(".png"));
