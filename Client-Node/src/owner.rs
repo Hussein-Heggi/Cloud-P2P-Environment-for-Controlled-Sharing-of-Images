@@ -288,7 +288,16 @@ pub async fn approve_adjust_request(
     // Update LocalAccessMap
     {
         let mut s = state.write().await;
-        s.local_access_map.adjust_views(&viewer, &image_name, approved_views);
+
+        if approved_views == 0 {
+            // Remove entry from access map when approved views = 0
+            if s.local_access_map.revoke_access(&viewer, &image_name) {
+                println!("[P2P_OWNER] 🗑️  Removed {} access to '{}' from LocalAccessMap (approved 0 views)",
+                         viewer, image_name);
+            }
+        } else {
+            s.local_access_map.adjust_views(&viewer, &image_name, approved_views);
+        }
 
         // Save to disk
         if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
@@ -433,6 +442,25 @@ pub async fn send_peer_adjust_order(
 
     println!("[P2P_OWNER] Sent PEER_ADJUST_ORDER");
 
+    // Update LocalAccessMap on owner side
+    {
+        let mut s = state.write().await;
+        if new_views == 0 {
+            // Remove entry from access map when views = 0
+            if s.local_access_map.revoke_access(viewer, image_name) {
+                println!("[P2P_OWNER] 🗑️  Removed {} access to '{}' from LocalAccessMap (views = 0)",
+                         viewer, image_name);
+            }
+        } else {
+            s.local_access_map.adjust_views(viewer, image_name, new_views);
+        }
+
+        // Save to disk
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            s.local_access_map.save_to_file(&path)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -479,6 +507,25 @@ pub async fn send_peer_revoke(
     stream.flush().await?;
 
     println!("[P2P_OWNER] Sent PEER_REVOKE");
+
+    // Remove from LocalAccessMap on owner side
+    {
+        let mut s = state.write().await;
+        if s.local_access_map.revoke_access(viewer, image_name) {
+            println!("[P2P_OWNER] 🗑️  Removed {} access to '{}' from LocalAccessMap (revoked)",
+                     viewer, image_name);
+        } else {
+            println!("[P2P_OWNER] ⚠️  Entry for {} on '{}' not found in LocalAccessMap",
+                     viewer, image_name);
+        }
+
+        // Save to disk
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            if let Err(e) = s.local_access_map.save_to_file(&path) {
+                eprintln!("[P2P_OWNER] Failed to save LocalAccessMap: {}", e);
+            }
+        }
+    }
 
     Ok(())
 }
