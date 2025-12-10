@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration, Instant};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
@@ -21,12 +23,61 @@ use crate::dos::DosClient;
 use crate::simple_client::SharedClientState;
 use crate::viewer::RequestStatus;
 use crate::owner::PendingViewRequest;
+use crate::protocol::DOS_QUERY;
 
 /// Shared state for HTTP API
 #[derive(Clone)]
 pub struct ApiState {
     pub client_state: SharedClientState,
     pub writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+}
+
+async fn send_tcp_message(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    msg_type: u8,
+    payload: &[u8],
+) -> Result<()> {
+    let total_len = 1 + payload.len();
+    writer.write_all(&(total_len as u32).to_le_bytes()).await?;
+    writer.write_u8(msg_type).await?;
+    writer.write_all(payload).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn refresh_dos(api_state: &ApiState) -> Result<()> {
+    let (username, prev_version, joined) = {
+        let s = api_state.client_state.read().await;
+        (s.username.clone(), s.dos.get_version(), s.joined)
+    };
+
+    if !joined || username.is_empty() {
+        return Ok(());
+    }
+
+    let mut payload = Vec::new();
+    let username_bytes = username.as_bytes();
+    payload.extend((username_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(username_bytes);
+
+    {
+        let mut writer = api_state.writer.lock().await;
+        send_tcp_message(&mut *writer, DOS_QUERY, &payload).await?;
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(200);
+    loop {
+        sleep(Duration::from_millis(50)).await;
+        let version = {
+            let s = api_state.client_state.read().await;
+            s.dos.get_version()
+        };
+        if version > prev_version || Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -138,6 +189,10 @@ async fn get_status(State(api_state): State<ApiState>) -> Json<StatusResponse> {
 
 /// GET /api/dos - Get full DOS-C
 async fn get_dos(State(api_state): State<ApiState>) -> Json<DosResponse> {
+    if let Err(e) = refresh_dos(&api_state).await {
+        println!("[API DEBUG] Failed to refresh DOS before response: {}", e);
+    }
+
     let s = api_state.client_state.read().await;
 
     println!("[API DEBUG] /api/dos called");
