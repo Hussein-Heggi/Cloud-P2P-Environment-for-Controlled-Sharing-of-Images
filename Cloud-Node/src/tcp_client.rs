@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     client_protocol,
@@ -241,9 +241,10 @@ async fn route_client_message(
             handle_client_ping_tcp(state, stream, peer_addr, payload).await
         }
 
-        // REMOVED: Old server-mediated view request forwarding (replaced by P2P)
-        // VIEW_REQUEST, DENY_VIEW, APPROVE_VIEW no longer handled by server
-        // Clients now communicate directly via P2P connections
+        x if x == client_protocol::VIEW_REQUEST => {
+            info!(%peer_addr, len=payload.len(), "Received VIEW_REQUEST from client (offline request)");
+            handle_view_request_tcp(state, &cfg, stream, peer_addr, payload).await
+        }
 
         x if x == client_protocol::OWNER_IMAGE_META => {
             info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_META from client");
@@ -604,6 +605,144 @@ async fn handle_client_ping_tcp(
     send_tcp_response(stream, client_protocol::SERVER_PONG, &pong_data).await?;
 
     println!("[PING] {} (DOS version={})", username, dos_version);
+    Ok(())
+}
+
+/// Handle VIEW_REQUEST: Store offline request in Firebase
+/// Called when viewer sends VIEW_REQUEST for offline owner (or TCP connection failed)
+async fn handle_view_request_tcp(
+    state: SharedState,
+    cfg: &Config,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    data: &[u8],
+) -> Result<()> {
+    println!("[VIEW_REQUEST] 📬 Received offline view request from {}", peer_addr);
+
+    // Parse VIEW_REQUEST payload:
+    // [request_id:u32][viewer_len:u16][viewer][owner_len:u16][owner]
+    // [image_len:u16][image][requested_views:u32]
+
+    let mut offset = 0;
+
+    // Request ID (u32)
+    if data.len() < offset + 4 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for request_id"));
+    }
+    let request_id = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+    offset += 4;
+
+    // Viewer name (u16 length + bytes)
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for viewer_len"));
+    }
+    let viewer_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+
+    if data.len() < offset + viewer_len {
+        return Err(anyhow::anyhow!("VIEW_REQUEST invalid viewer length"));
+    }
+    let viewer = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
+    offset += viewer_len;
+
+    // Owner name (u16 length + bytes)
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for owner_len"));
+    }
+    let owner_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+
+    if data.len() < offset + owner_len {
+        return Err(anyhow::anyhow!("VIEW_REQUEST invalid owner length"));
+    }
+    let owner = String::from_utf8(data[offset..offset + owner_len].to_vec())?;
+    offset += owner_len;
+
+    // Image name (u16 length + bytes)
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for image_len"));
+    }
+    let image_len = u16::from_le_bytes(data[offset..offset + 2].try_into()?) as usize;
+    offset += 2;
+
+    if data.len() < offset + image_len {
+        return Err(anyhow::anyhow!("VIEW_REQUEST invalid image length"));
+    }
+    let image_name = String::from_utf8(data[offset..offset + image_len].to_vec())?;
+    offset += image_len;
+
+    // Requested views (u32)
+    if data.len() < offset + 4 {
+        return Err(anyhow::anyhow!("VIEW_REQUEST too short for requested_views"));
+    }
+    let requested_views = u32::from_le_bytes(data[offset..offset + 4].try_into()?);
+
+    println!("[VIEW_REQUEST] 📋 Parsed: viewer={}, owner={}, image={}, views={}, request_id={}",
+             viewer, owner, image_name, requested_views, request_id);
+
+    // Check if this server is the executor (only executor writes to Firebase)
+    let (is_executor, firestore_db) = {
+        let s = state.read().await;
+        let my_ip = cfg.service_bind_addr()
+            .expect("service_bind_addr not configured")
+            .ip();
+
+        let is_exec = if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            exec_ip == &my_ip && now <= deadline
+        } else {
+            false
+        };
+
+        (is_exec, s.firestore_db.clone())
+    };
+
+    if !is_executor {
+        println!("[VIEW_REQUEST] ⚠️  Not executor, ignoring offline request (should be routed to executor)");
+        return Ok(());
+    }
+
+    println!("[VIEW_REQUEST] ✅ This server is executor, saving to Firebase...");
+
+    // Get Firestore DB handle
+    let db = match firestore_db {
+        Some(db) => db,
+        None => {
+            warn!("[VIEW_REQUEST] ❌ Firestore not initialized, cannot save offline request");
+            return Ok(());
+        }
+    };
+
+    // Create OfflineRequest struct
+    let offline_request = crate::firebase::OfflineRequest {
+        requester: viewer.clone(),
+        owner: owner.clone(),
+        image_name: image_name.clone(),
+        request_id,
+        requested_views,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+    };
+
+    // Save to Firebase
+    match crate::firebase::add_offline_request(&db, &owner, offline_request).await {
+        Ok(_) => {
+            println!("[VIEW_REQUEST] ✅ Saved offline request to Firebase: {} → {} ({})",
+                     viewer, owner, image_name);
+            println!("[VIEW_REQUEST] 📦 Request will be delivered when {} comes online (JOIN)",
+                     owner);
+        }
+        Err(e) => {
+            error!("[VIEW_REQUEST] ❌ Failed to save offline request to Firebase: {}", e);
+            return Err(e);
+        }
+    }
+
     Ok(())
 }
 
