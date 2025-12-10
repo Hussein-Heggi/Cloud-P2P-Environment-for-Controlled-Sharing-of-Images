@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import StatusBar from '../components/StatusBar';
-import { getViewerAccessMap, viewImage, requestAdjustViews, AccessGrant } from '../api/client';
+import { getViewerAccessMap, viewImage, requestAdjustViews, AccessGrant, API_BASE_URL } from '../api/client';
 
 export default function Downloads() {
   const [grants, setGrants] = useState<AccessGrant[]>([]);
@@ -86,6 +86,19 @@ export default function Downloads() {
     }
   };
 
+  const getCoverUrl = (path?: string) => {
+    if (!path) return null;
+    const normalized = path.replace(/\\/g, '/');
+    const prefixRegex = /^\.?\/?client_images\//;
+    const stripped = normalized.replace(prefixRegex, '');
+    const relative = stripped !== normalized ? stripped : normalized.replace(/^\//, '');
+    if (!relative) return null;
+    const encoded = relative.split('/').map(encodeURIComponent).join('/');
+    return stripped !== normalized
+      ? `${API_BASE_URL}/client-images/${encoded}`
+      : `${API_BASE_URL}/${encoded}`;
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
       <StatusBar />
@@ -112,54 +125,67 @@ export default function Downloads() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {grants.map((grant, index) => (
-              <div key={index} className="bg-white rounded-lg shadow overflow-hidden">
-                <div className="p-4">
-                  <h3 className="font-semibold text-lg mb-2">{grant.image_name}</h3>
-                  <p className="text-sm text-gray-600 mb-1">
-                    <strong>Owner:</strong> {grant.owner}
-                  </p>
-                  <p className="text-sm text-gray-600 mb-1">
-                    <strong>Remaining Views:</strong>{' '}
-                    <span className={`font-bold ${
-                      grant.remaining_views <= 3 ? 'text-red-600' : 'text-green-600'
-                    }`}>
-                      {grant.remaining_views}
-                    </span>
-                  </p>
-                  <p className="text-xs text-gray-500 mb-4">
-                    Received: {new Date(grant.received_at * 1000).toLocaleString()}
-                  </p>
+            {grants.map((grant, index) => {
+              const coverUrl = getCoverUrl(grant.encrypted_path);
+              return (
+                <div key={index} className="bg-white rounded-lg shadow overflow-hidden">
+                  {coverUrl && (
+                    <div className="h-48 bg-gray-50 border-b border-gray-100 flex items-center justify-center">
+                      <img
+                        src={coverUrl}
+                        alt={`${grant.image_name} encrypted preview`}
+                        className="object-contain max-h-48"
+                        loading="lazy"
+                      />
+                    </div>
+                  )}
+                  <div className="p-4">
+                    <h3 className="font-semibold text-lg mb-2">{grant.image_name}</h3>
+                    <p className="text-sm text-gray-600 mb-1">
+                      <strong>Owner:</strong> {grant.owner}
+                    </p>
+                    <p className="text-sm text-gray-600 mb-1">
+                      <strong>Remaining Views:</strong>{' '}
+                      <span className={`font-bold ${
+                        grant.remaining_views <= 3 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {grant.remaining_views}
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-500 mb-4">
+                      Received: {new Date(grant.received_at * 1000).toLocaleString()}
+                    </p>
 
-                  {/* View Button */}
-                  <button
-                    onClick={() => handleViewImage(grant.owner, grant.image_name)}
-                    disabled={viewing?.owner === grant.owner && viewing?.image === grant.image_name}
-                    className={`w-full py-2 px-4 rounded-md font-medium mb-2 ${
-                      viewing?.owner === grant.owner && viewing?.image === grant.image_name
-                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                    {/* View Button */}
+                    <button
+                      onClick={() => handleViewImage(grant.owner, grant.image_name)}
+                      disabled={viewing?.owner === grant.owner && viewing?.image === grant.image_name}
+                      className={`w-full py-2 px-4 rounded-md font-medium mb-2 ${
+                        viewing?.owner === grant.owner && viewing?.image === grant.image_name
+                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                          : grant.remaining_views <= 0
+                          ? 'bg-red-500 text-white cursor-not-allowed'
+                          : 'bg-blue-500 hover:bg-blue-600 text-white'
+                      }`}
+                    >
+                      {viewing?.owner === grant.owner && viewing?.image === grant.image_name
+                        ? 'Loading...'
                         : grant.remaining_views <= 0
-                        ? 'bg-red-500 text-white cursor-not-allowed'
-                        : 'bg-blue-500 hover:bg-blue-600 text-white'
-                    }`}
-                  >
-                    {viewing?.owner === grant.owner && viewing?.image === grant.image_name
-                      ? 'Loading...'
-                      : grant.remaining_views <= 0
-                      ? 'No Views Left'
-                      : 'View Image'}
-                  </button>
+                        ? 'No Views Left'
+                        : 'View Image'}
+                    </button>
 
-                  {/* Request More Views Button */}
-                  <button
-                    onClick={() => handleRequestAdjust(grant.owner, grant.image_name, grant.remaining_views)}
-                    className="w-full py-2 px-4 rounded-md font-medium bg-green-500 hover:bg-green-600 text-white"
-                  >
-                    Request More Views
-                  </button>
+                    {/* Request More Views Button */}
+                    <button
+                      onClick={() => handleRequestAdjust(grant.owner, grant.image_name, grant.remaining_views)}
+                      className="w-full py-2 px-4 rounded-md font-medium bg-green-500 hover:bg-green-600 text-white"
+                    >
+                      Request More Views
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

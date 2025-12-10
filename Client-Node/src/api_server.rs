@@ -57,7 +57,7 @@ pub struct DosResponse {
 pub struct DosClientInfo {
     pub name: String,
     pub images: Vec<String>,
-    // Removed: ip, port, online, last_seen (not in minimal DOS-C v2.0)
+    pub online: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +154,7 @@ async fn get_dos(State(api_state): State<ApiState>) -> Json<DosResponse> {
         .map(|(_, client)| DosClientInfo {
             name: client.client_name.clone(),
             images: client.images.clone(),
+            online: client.online,
         })
         .collect();
 
@@ -730,7 +731,8 @@ pub async fn run_api_server(
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_headers(Any)
+        .expose_headers([header::HeaderName::from_static("x-remaining-views")]);
 
     // Build router
     let app = Router::new()
@@ -760,6 +762,7 @@ pub async fn run_api_server(
         .route("/api/owner/revoke/:viewer/:image", post(owner_revoke_access))
         // Serve static files (images)
         .nest_service("/downloads", ServeDir::new("downloads"))
+        .nest_service("/client-images", ServeDir::new("client_images"))
         .layer(cors)
         .with_state(api_state);
 

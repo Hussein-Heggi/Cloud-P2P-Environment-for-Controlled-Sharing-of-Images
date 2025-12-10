@@ -178,6 +178,9 @@ export default function Dashboard() {
                         User
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Available Images
                       </th>
                     </tr>
@@ -187,11 +190,19 @@ export default function Dashboard() {
                       console.log('[UI DEBUG] Rendering DOS table with', dosClients.length, 'clients');
                       console.log('[UI DEBUG] Clients to render:', dosClients.map(c => ({ name: c.name, images: c.images.length })));
                       return dosClients.map((client) => {
+                        const isOnline = client.online ?? true;
                         console.log('[UI DEBUG] Rendering client row:', client.name);
                         return (
                           <tr key={client.name}>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                               {client.name}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                isOnline ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'
+                              }`}>
+                                {isOnline ? 'Online' : 'Offline'}
+                              </span>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500">
                               {client.images.length > 0 ? (

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:3001';
+export const API_BASE_URL = 'http://localhost:3001';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -13,7 +13,7 @@ const api = axios.create({
 export interface DosClient {
   name: string;
   images: string[];
-  // Removed: ip, port, online, last_seen (not in minimal DOS-C)
+  online: boolean;
 }
 
 export interface DosResponse {

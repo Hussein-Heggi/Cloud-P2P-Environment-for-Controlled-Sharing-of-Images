@@ -892,6 +892,21 @@ async fn handle_peer_view_response(
 
     println!("[P2P_VIEWER] Identified owner: {}", owner);
 
+    // Update request status in shared state so UI reflects approval
+    {
+        let mut s = state.write().await;
+        let mut updated = false;
+        for req in s.my_requests.values_mut() {
+            if req.owner == owner && req.image_name == image_name {
+                req.status = crate::viewer::RequestStatus::Approved;
+                updated = true;
+            }
+        }
+        if updated {
+            println!("[P2P_VIEWER] 🟢 Marked request for '{}' from {} as approved", image_name, owner);
+        }
+    }
+
     // Create pending download entry to track incoming chunks
     let key = crate::simple_client::PendingImageDownload::make_key(&owner, &image_name);
 
@@ -1051,6 +1066,13 @@ async fn handle_peer_image_chunk(
                 let key = crate::simple_client::PendingImageDownload::make_key(
                     &pending.owner, &pending.image_name);
                 s.pending_downloads.remove(&key);
+
+                // Ensure request state reflects approval in case it was still pending
+                for req in s.my_requests.values_mut() {
+                    if req.owner == pending.owner && req.image_name == pending.image_name {
+                        req.status = crate::viewer::RequestStatus::Approved;
+                    }
+                }
             }
 
             println!("[P2P_VIEWER] ✅ Download complete! Image ready to view ({} times)",

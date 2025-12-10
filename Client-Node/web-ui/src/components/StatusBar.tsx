@@ -48,16 +48,6 @@ export default function StatusBar() {
             <span className="text-gray-400">User:</span> <span className="font-medium">{status.username}</span>
           </div>
         )}
-        {status?.server_addr && (
-          <div className="text-sm">
-            <span className="text-gray-400">Server:</span> <span className="font-mono text-xs">{status.server_addr}</span>
-          </div>
-        )}
-        {status?.dos_version !== undefined && (
-          <div className="text-sm">
-            <span className="text-gray-400">DOS Version:</span> <span className="font-medium">{status.dos_version}</span>
-          </div>
-        )}
       </div>
       <div className="text-xs text-gray-400">
         Cloud-P2P Client v0.1.0
