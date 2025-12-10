@@ -728,8 +728,8 @@ pub async fn run_listener(
                 let image_name = String::from_utf8(data[offset..offset + image_len].to_vec())?;
                 offset += image_len;
 
-                // Parse request_id and requested_views (only for VIEW/ADJUST)
-                let (req_id, requested_views) = if request_type == "VIEW" || request_type == "ADJUST" {
+                // Parse request_id and requested_views (only for VIEW/ADJUST/ADJUST_ORDER)
+                let (req_id, requested_views) = if request_type == "VIEW" || request_type == "ADJUST" || request_type == "ADJUST_ORDER" {
                     if data.len() < offset + 4 {
                         println!("[CLIENT-LISTENER] Invalid PENDING_REQUEST: no request ID");
                         continue;

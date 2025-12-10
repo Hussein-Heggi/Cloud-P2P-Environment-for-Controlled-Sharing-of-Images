@@ -574,8 +574,8 @@ async fn handle_join_tcp(
                         payload.extend((req.image_name.len() as u16).to_le_bytes());
                         payload.extend(req.image_name.as_bytes());
 
-                        // Request ID and requested views (only for VIEW/ADJUST)
-                        if req.request_type == "VIEW" || req.request_type == "ADJUST" {
+                        // Request ID and requested views (only for VIEW/ADJUST/ADJUST_ORDER)
+                        if req.request_type == "VIEW" || req.request_type == "ADJUST" || req.request_type == "ADJUST_ORDER" {
                             payload.extend(req.request_id.to_le_bytes());
                             payload.extend(req.requested_views.to_le_bytes());
                         }
