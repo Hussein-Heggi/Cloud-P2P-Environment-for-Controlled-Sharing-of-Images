@@ -368,19 +368,20 @@ async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Co
             continue;
         }
 
-        // Select best executor based on load
+        // Leader is always the executor
         let (executor_id, leader_id) = {
             let mut s = state.write().await;
-            
-            // Prune stale load reports
+
+            // Prune stale load reports (for monitoring purposes)
             let now = now_ms();
             s.load_reports.retain(|_, info| {
                 now.saturating_sub(info.timestamp_ms) <= Config::LOAD_STALE_TIMEOUT_MS
             });
 
-            let executor_id = select_best_executor(&s, &cfg).unwrap_or(1);
+            // NEW: Leader is always executor (no load balancing)
+            let executor_id = s.node_id;  // Use my own node_id (since I'm the leader)
             s.current_executor_id = Some(executor_id);
-            
+
             (executor_id, s.node_id)
         };
 
@@ -424,7 +425,7 @@ async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Co
             s.executor_lease_deadline_ms = Some(now_ms() + lease_ms as u128);
         }
 
-        // Log with load information at most once every ~12 seconds
+        // Log assignment at most once every ~12 seconds
         if last_log.elapsed() >= Duration::from_secs(12) {
             let load_info: Vec<String> = {
                 let s = state.read().await;
@@ -446,7 +447,7 @@ async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Co
 
             let epoch_offset = epoch::epoch_offset_ms();
             println!(
-                "[ASSIGN] executor=node_{} lease={}ms epoch_offset={}ms | loads: {}",
+                "[ASSIGN] leader=executor=node_{} lease={}ms epoch_offset={}ms | loads: {}",
                 executor_id,
                 lease_ms,
                 epoch_offset,
@@ -458,7 +459,7 @@ async fn broadcast_assign_loop(state: SharedState, sock: Arc<UdpSocket>, cfg: Co
                 ?exec_ip,
                 lease_ms,
                 epoch_offset,
-                "ASSIGN broadcast sent with load-based selection (epoch-aligned)"
+                "ASSIGN broadcast sent (leader is executor)"
             );
             last_log = Instant::now();
         }
