@@ -345,14 +345,23 @@ pub async fn send_peer_view_request(
         }
     };
 
+    // Get viewer's P2P port so owner knows where to send response
+    let viewer_p2p_port = {
+        let s = state.read().await;
+        s.p2p_port
+    };
+
     // Build PEER_VIEW_REQUEST payload
-    // Wire format: [viewer_len:u16][viewer][image_name_len:u16][image_name][requested_views:u32]
+    // Wire format: [viewer_len:u16][viewer][viewer_p2p_port:u16][image_name_len:u16][image_name][requested_views:u32]
     let mut payload = Vec::new();
 
     // Viewer name
     let viewer_bytes = viewer.as_bytes();
     payload.extend((viewer_bytes.len() as u16).to_le_bytes());
     payload.extend_from_slice(viewer_bytes);
+
+    // Viewer's P2P listening port (so owner can connect back)
+    payload.extend(viewer_p2p_port.to_le_bytes());
 
     // Image name
     let image_bytes = image_name.as_bytes();

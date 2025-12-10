@@ -187,6 +187,14 @@ async fn handle_peer_view_request(
     let viewer_name = String::from_utf8(data[offset..offset + viewer_len].to_vec())?;
     offset += viewer_len;
 
+    // Parse viewer's P2P port
+    if data.len() < offset + 2 {
+        return Err(anyhow::anyhow!("Invalid viewer P2P port"));
+    }
+
+    let viewer_p2p_port = u16::from_le_bytes(data[offset..offset + 2].try_into()?);
+    offset += 2;
+
     // Parse image name
     if data.len() < offset + 2 {
         return Err(anyhow::anyhow!("Invalid image name length"));
@@ -272,13 +280,19 @@ async fn handle_peer_view_request(
     {
         use crate::owner::PendingViewRequest;
 
+        // Construct correct viewer address using their IP and P2P listening port
+        let viewer_ip = peer_addr.ip();
+        let viewer_correct_addr = std::net::SocketAddr::new(viewer_ip, viewer_p2p_port);
+
+        println!("[P2P_SERVER] Viewer address: {} (source) -> {} (P2P port)", peer_addr, viewer_correct_addr);
+
         let mut s = state.write().await;
         let pending_req = PendingViewRequest {
             request_id,
             viewer: viewer_name.clone(),
             image_name: image_name.clone(),
             requested_views,
-            peer_addr,
+            peer_addr: viewer_correct_addr,  // Use P2P listening port, not source port
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
