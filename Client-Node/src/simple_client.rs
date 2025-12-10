@@ -870,6 +870,57 @@ pub async fn run_listener(
                                      requester_name, image_name);
                         }
                     }
+                    "ADJUST_ORDER" => {
+                        // Note: requested_views field contains new_views for ADJUST_ORDER
+                        let new_views = requested_views;
+
+                        println!("\n╔═══════════════════════════════════════════════════════════╗");
+                        println!("║  🔄 ADJUST ORDER DELIVERED BY SERVER                     ║");
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  From:       {}                                          ║", requester_name);
+                        println!("║  Image:      {}                                         ║", image_name);
+                        println!("║  New Views:  {}                                              ║", new_views);
+                        println!("╠═══════════════════════════════════════════════════════════╣");
+                        println!("║  Owner {} has adjusted your view count.            ║", requester_name);
+                        println!("║  Updating your access map...                              ║");
+                        println!("╚═══════════════════════════════════════════════════════════╝\n");
+
+                        // Update viewer's access map (load from file, modify, save)
+                        use crate::viewer::ViewerAccessMap;
+
+                        let map_path = ViewerAccessMap::default_path()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("viewer_access_map.json"));
+
+                        let mut viewer_map = ViewerAccessMap::load_from_file(&map_path).await
+                            .unwrap_or_else(|_| ViewerAccessMap::new());
+
+                        if new_views == 0 {
+                            // Remove access if new_views is 0
+                            if viewer_map.remove_grant(&requester_name, &image_name) {
+                                println!("[VIEWER] 🗑️  Removed {} access to '{}' from ViewerAccessMap (views = 0)",
+                                         requester_name, image_name);
+                            }
+                        } else {
+                            // Update view count
+                            // Check if grant exists first
+                            if let Some(grant) = viewer_map.get_grant(&requester_name, &image_name) {
+                                let storage_path = grant.encrypted_path.clone();
+                                viewer_map.add_grant(&requester_name, &image_name, new_views, &storage_path);
+                                println!("[VIEWER] 🔄 Updated {} access to '{}' in ViewerAccessMap: {} views",
+                                         requester_name, image_name, new_views);
+                            } else {
+                                println!("[VIEWER] ⚠️  Entry for {} on '{}' not found in ViewerAccessMap",
+                                         requester_name, image_name);
+                            }
+                        }
+
+                        // Save to disk
+                        if let Err(e) = viewer_map.save_to_file(&map_path).await {
+                            eprintln!("[VIEWER] Failed to save ViewerAccessMap: {}", e);
+                        } else {
+                            println!("[VIEWER] ✅ ViewerAccessMap saved successfully");
+                        }
+                    }
                     _ => {
                         println!("[CLIENT] ⚠️  Unknown request type: {}", request_type);
                     }

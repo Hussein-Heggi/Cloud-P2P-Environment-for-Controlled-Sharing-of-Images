@@ -608,8 +608,10 @@ async fn owner_adjust_views(
                    "View count must be > 0. Use revoke endpoint instead.".to_string()));
     }
 
-    crate::owner::send_peer_adjust_order(
+    // Use smart routing (P2P if online, server-mediated if offline/TCP fails)
+    crate::owner::adjust_viewer_views(
         api_state.client_state.clone(),
+        api_state.writer.clone(),
         &viewer,
         &image_name,
         payload.new_views,

@@ -464,6 +464,143 @@ pub async fn send_peer_adjust_order(
     Ok(())
 }
 
+/// Send ADJUST_ORDER_REQUEST to server (server-mediated fallback)
+/// Format: [owner_len:u16][owner][viewer_len:u16][viewer][image_len:u16][image][new_views:u32]
+pub async fn send_adjust_order_request(
+    state: SharedClientState,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    viewer: String,
+    image_name: String,
+    new_views: u32,
+) -> Result<()> {
+    let owner = {
+        let s = state.read().await;
+        s.username.clone()
+    };
+
+    println!("[OWNER] Sending server-mediated ADJUST_ORDER_REQUEST: viewer={}, image={}, new_views={}",
+             viewer, image_name, new_views);
+
+    // Build payload
+    let mut payload = Vec::new();
+
+    // Owner name
+    let owner_bytes = owner.as_bytes();
+    payload.extend((owner_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(owner_bytes);
+
+    // Viewer name
+    let viewer_bytes = viewer.as_bytes();
+    payload.extend((viewer_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(viewer_bytes);
+
+    // Image name
+    let image_bytes = image_name.as_bytes();
+    payload.extend((image_bytes.len() as u16).to_le_bytes());
+    payload.extend_from_slice(image_bytes);
+
+    // New views
+    payload.extend(new_views.to_le_bytes());
+
+    // Send ADJUST_ORDER_REQUEST
+    {
+        let mut w = writer.lock().await;
+        w.write_all(&(payload.len() as u32 + 1).to_le_bytes()).await?;
+        w.write_u8(ADJUST_ORDER_REQUEST).await?;
+        w.write_all(&payload).await?;
+        w.flush().await?;
+    }
+
+    println!("[OWNER] Server-mediated ADJUST_ORDER_REQUEST sent");
+
+    // Update LocalAccessMap on owner side
+    {
+        let mut s = state.write().await;
+        if new_views == 0 {
+            // Remove entry from access map when views = 0
+            if s.local_access_map.revoke_access(&viewer, &image_name) {
+                println!("[OWNER] 🗑️  Removed {} access to '{}' from LocalAccessMap (views = 0)",
+                         viewer, image_name);
+            }
+        } else {
+            s.local_access_map.adjust_views(&viewer, &image_name, new_views);
+        }
+
+        // Save to disk
+        if let Ok(path) = crate::local_access_map::LocalAccessMap::default_path() {
+            if let Err(e) = s.local_access_map.save_to_file(&path) {
+                eprintln!("[OWNER] Failed to save LocalAccessMap: {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Smart adjust order routing: Try P2P if viewer online, fallback to server if offline/TCP fails
+/// This is the main entry point for owner adjusting a viewer's view count
+pub async fn adjust_viewer_views(
+    state: SharedClientState,
+    writer: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    viewer: &str,
+    image_name: &str,
+    new_views: u32,
+) -> Result<()> {
+    // Check DOS for viewer's online status and connection info
+    let (viewer_online, viewer_ip, viewer_port) = {
+        let s = state.read().await;
+
+        // Find viewer in DOS-C
+        let viewer_client = s.dos.clients.get(viewer);
+        let is_online = if let Some(vc) = viewer_client {
+            vc.online && vc.client_ip != "0.0.0.0" && vc.client_port != 0
+        } else {
+            false
+        };
+
+        let (ip, port) = if let Some(vc) = viewer_client {
+            (vc.client_ip.clone(), vc.client_port)
+        } else {
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_online, ip, port)
+    };
+
+    if viewer_online {
+        // Viewer appears online → Try P2P first (Case 2)
+        println!("[ADJUST-ORDER] 🟢 Viewer {} appears ONLINE at {}:{} - attempting P2P", viewer, viewer_ip, viewer_port);
+        match send_peer_adjust_order(state.clone(), viewer, image_name, new_views).await {
+            Ok(()) => {
+                println!("[ADJUST-ORDER] ✅ P2P connection succeeded");
+                Ok(())
+            }
+            Err(e) => {
+                // TCP connection failed - fallback to server-mediated (Case 2)
+                println!("[ADJUST-ORDER] ⚠️  P2P connection failed: {}", e);
+                println!("[ADJUST-ORDER] 🔄 Falling back to server-mediated offline request");
+                send_adjust_order_request(
+                    state,
+                    writer,
+                    viewer.to_string(),
+                    image_name.to_string(),
+                    new_views,
+                ).await
+            }
+        }
+    } else {
+        // Viewer is offline → Use server-mediated flow directly (Case 1)
+        println!("[ADJUST-ORDER] 🔴 Viewer {} is OFFLINE - using server-mediated flow", viewer);
+        send_adjust_order_request(
+            state,
+            writer,
+            viewer.to_string(),
+            image_name.to_string(),
+            new_views,
+        ).await
+    }
+}
+
 // ============================================================================
 // Phase 5.1: Owner-Initiated Revoke
 // ============================================================================

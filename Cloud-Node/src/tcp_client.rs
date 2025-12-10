@@ -256,6 +256,11 @@ async fn route_client_message(
             handle_revoke_request_tcp(state, &cfg, stream, peer_addr, payload.to_vec()).await
         }
 
+        x if x == client_protocol::ADJUST_ORDER_REQUEST => {
+            info!(%peer_addr, len=payload.len(), "Received ADJUST_ORDER_REQUEST from client (offline request)");
+            handle_adjust_order_request_tcp(state, &cfg, stream, peer_addr, payload.to_vec()).await
+        }
+
         x if x == client_protocol::OWNER_IMAGE_META => {
             info!(%peer_addr, len=payload.len(), "Received OWNER_IMAGE_META from client");
             handle_owner_image_meta(state, payload).await
@@ -1085,6 +1090,154 @@ async fn handle_revoke_request_tcp(
         }
         Err(e) => {
             error!("[REVOKE_REQUEST] ❌ Failed to save offline request to Firebase: {}", e);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle ADJUST_ORDER_REQUEST: Owner adjusts viewer's view count when viewer is offline
+/// Payload format: [owner_len:u16][owner][viewer_len:u16][viewer][image_len:u16][image][new_views:u32]
+async fn handle_adjust_order_request_tcp(
+    state: SharedState,
+    cfg: &crate::config::Config,
+    _stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    peer_addr: SocketAddr,
+    payload: Vec<u8>,
+) -> Result<()> {
+    println!("[ADJUST_ORDER_REQUEST] 📨 Received ADJUST_ORDER_REQUEST from {}", peer_addr);
+
+    let mut offset = 0;
+
+    // Parse owner name
+    if payload.len() < offset + 2 {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for owner length");
+        return Ok(());
+    }
+    let owner_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + owner_len {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for owner name");
+        return Ok(());
+    }
+    let owner = String::from_utf8_lossy(&payload[offset..offset + owner_len]).to_string();
+    offset += owner_len;
+
+    // Parse viewer name
+    if payload.len() < offset + 2 {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for viewer length");
+        return Ok(());
+    }
+    let viewer_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + viewer_len {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for viewer name");
+        return Ok(());
+    }
+    let viewer = String::from_utf8_lossy(&payload[offset..offset + viewer_len]).to_string();
+    offset += viewer_len;
+
+    // Parse image name
+    if payload.len() < offset + 2 {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for image length");
+        return Ok(());
+    }
+    let image_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if payload.len() < offset + image_len {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for image name");
+        return Ok(());
+    }
+    let image_name = String::from_utf8_lossy(&payload[offset..offset + image_len]).to_string();
+    offset += image_len;
+
+    // Parse new views
+    if payload.len() < offset + 4 {
+        warn!("[ADJUST_ORDER_REQUEST] ❌ Payload too short for new_views");
+        return Ok(());
+    }
+    let new_views = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
+
+    println!("[ADJUST_ORDER_REQUEST] 📝 Parsed: owner={}, viewer={}, image={}, new_views={}",
+             owner, viewer, image_name, new_views);
+
+    // Check if I'm the executor and get firestore handle + owner's P2P address
+    let (is_executor, firestore_db, owner_ip, owner_port) = {
+        let s = state.read().await;
+        let my_ip = cfg.service_bind_addr()
+            .expect("service_bind_addr not configured")
+            .ip();
+
+        let is_exec = if let (Some(exec_ip), Some(deadline)) = (&s.executor_ip, s.executor_lease_deadline_ms) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            exec_ip == &my_ip && now <= deadline
+        } else {
+            false
+        };
+
+        // Look up owner's P2P address from DOS (requester for ADJUST_ORDER)
+        let (o_ip, o_port) = if let Some(owner_client) = s.dos_clients.get(&owner) {
+            println!("[ADJUST_ORDER_REQUEST] 📍 Found owner {} in DOS: ip={}, port={}",
+                     owner, owner_client.client_ip, owner_client.client_port);
+            (owner_client.client_ip.clone(), owner_client.client_port)
+        } else {
+            println!("[ADJUST_ORDER_REQUEST] ⚠️  Owner {} not found in DOS, using fallback address", owner);
+            ("0.0.0.0".to_string(), 0)
+        };
+
+        (is_exec, s.firestore_db.clone(), o_ip, o_port)
+    };
+
+    if !is_executor {
+        println!("[ADJUST_ORDER_REQUEST] ⏭️  Not executor, skipping Firebase write");
+        return Ok(());
+    }
+
+    println!("[ADJUST_ORDER_REQUEST] ✅ I am executor - saving offline ADJUST_ORDER request to Firebase");
+
+    let db = match firestore_db {
+        Some(db) => db,
+        None => {
+            warn!("[ADJUST_ORDER_REQUEST] ❌ Firestore not initialized, cannot save offline request");
+            return Ok(());
+        }
+    };
+
+    // Create OfflineRequest struct with owner's P2P address (requester = owner)
+    let offline_request = crate::firebase::OfflineRequest {
+        request_type: "ADJUST_ORDER".to_string(),
+        requester: owner.clone(),    // Owner is the requester
+        recipient: viewer.clone(),    // Viewer is the recipient
+        image_name: image_name.clone(),
+        request_id: 0,  // Not used for ADJUST_ORDER
+        requested_views: new_views,  // Repurpose this field for new_views
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+        requester_ip: owner_ip.clone(),
+        requester_port: owner_port,
+    };
+
+    println!("[ADJUST_ORDER_REQUEST] 💾 Storing with owner P2P address: {}:{}", owner_ip, owner_port);
+
+    // Save to Firebase (recipient is viewer for ADJUST_ORDER)
+    match crate::firebase::add_offline_request(&db, &viewer, offline_request).await {
+        Ok(_) => {
+            println!("[ADJUST_ORDER_REQUEST] ✅ Saved offline request to Firebase: {} → {} ({}, new_views={})",
+                     owner, viewer, image_name, new_views);
+            println!("[ADJUST_ORDER_REQUEST] 📦 Request will be delivered when {} comes online (JOIN)",
+                     viewer);
+        }
+        Err(e) => {
+            error!("[ADJUST_ORDER_REQUEST] ❌ Failed to save offline request to Firebase: {}", e);
             return Err(e);
         }
     }
