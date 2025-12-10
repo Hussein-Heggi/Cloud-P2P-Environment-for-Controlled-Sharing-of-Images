@@ -262,12 +262,30 @@ pub async fn request_image_access(
     };
 
     if owner_online {
-        // Owner is online → Use P2P direct connection
+        // Owner is online → Try P2P direct connection first
         println!("[REQUEST] 🔵 Owner {} is ONLINE - attempting P2P to {}:{}",
                  owner, owner_ip, owner_port);
-        send_peer_view_request(state, owner, image_name, requested_views).await
+
+        match send_peer_view_request(state.clone(), owner, image_name, requested_views).await {
+            Ok(req_id) => {
+                println!("[REQUEST] ✅ P2P connection succeeded");
+                Ok(req_id)
+            }
+            Err(e) => {
+                // TCP connection failed - fallback to server-mediated (Case 2)
+                println!("[REQUEST] ⚠️  P2P connection failed: {}", e);
+                println!("[REQUEST] 🔄 Falling back to server-mediated offline request");
+                send_view_request(
+                    state,
+                    writer,
+                    owner.to_string(),
+                    image_name.to_string(),
+                    requested_views,
+                ).await
+            }
+        }
     } else {
-        // Owner is offline → Use server-mediated flow
+        // Owner is offline → Use server-mediated flow directly (Case 1)
         println!("[REQUEST] 🔴 Owner {} is OFFLINE - using server-mediated flow", owner);
         send_view_request(
             state,
